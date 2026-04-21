@@ -1,0 +1,15 @@
+.igdl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  outline: none;
+
+  &:hover {
+    opacity: 0.6;
+  }
+}

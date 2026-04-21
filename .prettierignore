@@ -1,0 +1,11 @@
+.output/
+.wxt/
+node_modules/
+docs/
+assets/
+references/
+public/
+*.md
+*.yml
+*.yaml
+*.html
