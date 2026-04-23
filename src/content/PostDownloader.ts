@@ -70,42 +70,80 @@ export class PostDownloader {
 
     const shortcode = extractShortcode(article);
     const accountName = extractAuthor(article);
-    const isMulti = allMedia.length > 1;
 
     // Relay data keyed by slide index (covers single and carousel posts).
     const relaySlides = extractAllSlidesFromRelay(shortcode);
+    // Use relay count as authoritative total — it includes virtualized off-screen slides.
+    const totalSlides = Math.max(allMedia.length, relaySlides.length);
+    const isMulti = totalSlides > 1;
 
     // Resolve the final download URL for each slide.
     const resolvedURLs: Array<string | null> = [];
-    for (let i = 0; i < allMedia.length; i++) {
-      const media = allMedia[i]!;
-      if (media.kind === 'image') {
-        resolvedURLs.push(media.url);
-        continue;
-      }
-      // Video slide: prefer relay, fall back to API, then DOM currentSrc.
+    const isVideoSlot: boolean[] = [];
+
+    for (let i = 0; i < totalSlides; i++) {
+      const media = allMedia[i]; // undefined for off-screen (virtualized) slides
       const relaySlide = relaySlides[i];
-      let videoURL: string | null = relaySlide?.videoURL ?? null;
-      if (!videoURL) {
-        const pk = relaySlide?.pk ?? null;
-        if (pk) videoURL = await fetchVideoURLFromAPI(pk);
+
+      if (media) {
+        if (media.kind === 'image') {
+          isVideoSlot.push(false);
+          resolvedURLs.push(media.url);
+          continue;
+        }
+        // Video slide: prefer relay, fall back to API.
+        // Filter blob URLs — they are scope-locked to the content script and
+        // cannot be passed to the background service worker.
+        isVideoSlot.push(true);
+        let videoURL: string | null = relaySlide?.videoURL ?? null;
+        if (!videoURL) {
+          const pk = relaySlide?.pk ?? null;
+          if (pk) videoURL = await fetchVideoURLFromAPI(pk);
+        }
+        const domUrl = media.url && !media.url.startsWith('blob:') ? media.url : null;
+        resolvedURLs.push(videoURL ?? domUrl);
+      } else {
+        // Off-screen slide: DOM has no content — recover exclusively from relay.
+        if (!relaySlide) {
+          isVideoSlot.push(false);
+          resolvedURLs.push(null);
+          continue;
+        }
+        if (relaySlide.videoURL) {
+          isVideoSlot.push(true);
+          resolvedURLs.push(relaySlide.videoURL);
+        } else if (relaySlide.pk) {
+          // pk present but no relay videoURL — try API (could be video or image).
+          const videoURL = await fetchVideoURLFromAPI(relaySlide.pk);
+          if (videoURL) {
+            isVideoSlot.push(true);
+            resolvedURLs.push(videoURL);
+          } else {
+            isVideoSlot.push(false);
+            resolvedURLs.push(relaySlide.imageURL);
+          }
+        } else {
+          isVideoSlot.push(false);
+          resolvedURLs.push(relaySlide.imageURL);
+        }
       }
-      resolvedURLs.push(videoURL || media.url || null);
     }
 
-    // Bail early if every video slide failed to resolve.
-    const videoIndices = allMedia
-      .map((m, i) => (m.kind === 'video' ? i : -1))
-      .filter((i) => i >= 0);
+    // Bail early if every video slot failed to resolve.
+    const videoIndices = isVideoSlot.map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
     if (videoIndices.length > 0 && videoIndices.every((i) => !resolvedURLs[i])) {
       Alert.warn('Could not resolve video URL — please try again or report at GitHub');
       return;
     }
 
-    // Dispatch one download request per slide.
+    // Dispatch one download request per resolved slide.
+    let skipped = 0;
     for (let i = 0; i < resolvedURLs.length; i++) {
       const url = resolvedURLs[i];
-      if (!url) continue;
+      if (!url) {
+        skipped++;
+        continue;
+      }
       const req: DownloadRequest = {
         kind: 'download',
         mediaURL: url,
@@ -118,6 +156,11 @@ export class PostDownloader {
       } catch (e) {
         Alert.error(`Download failed: ${String(e)}`);
       }
+    }
+    if (skipped > 0) {
+      Alert.warn(
+        `${skipped} slide${skipped > 1 ? 's' : ''} could not be resolved and were skipped`,
+      );
     }
   }
 }
