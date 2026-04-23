@@ -6,10 +6,16 @@ interface VideoVersion {
   type: number;
 }
 
+interface ImageCandidate {
+  url: string;
+  width?: number;
+}
+
 interface RelayMediaItem {
   code?: string;
   pk?: string;
   video_versions?: VideoVersion[];
+  image_versions2?: { candidates?: ImageCandidate[] };
   carousel_media?: RelayMediaItem[];
 }
 
@@ -33,6 +39,12 @@ function findValue(obj: unknown, key: string, depth = 0): unknown {
     }
   }
   return undefined;
+}
+
+function pickBestImageURL(candidates: ImageCandidate[] | undefined): string | null {
+  if (!candidates?.length) return null;
+  const sorted = [...candidates].sort((a, b) => (b.width ?? 0) - (a.width ?? 0));
+  return sorted[0]?.url ?? null;
 }
 
 function pickBestURL(versions: VideoVersion[]): string | null {
@@ -69,11 +81,12 @@ function findRelayItem(shortcode: string | null): RelayMediaItem | null {
 
 /**
  * Synchronous: returns per-slide relay data for a post (single or carousel).
- * Each entry maps to one media slide in order; `videoURL` is null for image slides.
+ * Each entry maps to one media slide in order.
+ * `videoURL` is null for image slides; `imageURL` is null for video slides.
  */
 export function extractAllSlidesFromRelay(
   shortcode: string | null,
-): Array<{ videoURL: string | null; pk: string | null }> {
+): Array<{ videoURL: string | null; imageURL: string | null; pk: string | null }> {
   const item = findRelayItem(shortcode);
   if (!item) return [];
 
@@ -81,13 +94,20 @@ export function extractAllSlidesFromRelay(
     logger.log('relay carousel hit for shortcode', shortcode);
     return item.carousel_media.map((slide) => ({
       videoURL: slide.video_versions?.length ? pickBestURL(slide.video_versions) : null,
+      imageURL: pickBestImageURL(slide.image_versions2?.candidates),
       pk: slide.pk ?? null,
     }));
   }
 
   const videoURL = item.video_versions?.length ? pickBestURL(item.video_versions) : null;
   if (videoURL) logger.log('relay cache hit for shortcode', shortcode);
-  return [{ videoURL, pk: item.pk ?? null }];
+  return [
+    {
+      videoURL,
+      imageURL: pickBestImageURL(item.image_versions2?.candidates),
+      pk: item.pk ?? null,
+    },
+  ];
 }
 
 /** Async fallback: fetches media info from the Instagram API using the session cookie. */
