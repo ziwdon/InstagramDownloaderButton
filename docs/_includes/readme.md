@@ -1,77 +1,121 @@
-## Looking for a new maintainer or buyer 
+# InstagramDownloaderButton
 
-Hi, I am looking for a new maintainer, because I do not use IG and I do not find any pleasure in developing this extension any more. 
-If you want to maintain this extension please contact me.
+A browser extension that adds a one-click download button to individual Instagram posts. Supports Chrome and Firefox via Manifest V3.
 
+The button appears next to the bookmark/save icon on feed posts, post modals, and reels. Clicking it downloads the image or video directly to your device. Carousel posts download all slides in one click.
 
-# InstagramDownloader
+## Features
 
-Firefox and Chrome Extension which creates an download button for instagram images and videos on the right of the
-bookmark icon.
+- Download images and videos from feed posts, modals, and reels
+- Carousel support — downloads every slide in one click
+- Highest-resolution image selection from `srcset`
+- Video URL resolved from the Relay prefetch cache embedded in the page, with an API fallback
+- Toast notifications on error
 
-Install on [Firefox](https://addons.mozilla.org/en-GB/firefox/addon/instagram_download/)
-and on [Chrome](https://chrome.google.com/webstore/detail/instagram-downloader/cpgaheeihidjmolbakklolchdplenjai).
+## Installation
 
-## General Download
+The extension is not published on the Chrome Web Store or Firefox Add-ons. You must build it from source and load it manually.
 
-![DownloadButton](https://i.imgur.com/IG7Im8F.jpg)
+### 1. Build
 
-A Download Button appearers while you hover over the image you want to download.
+```bash
+npm install
+npm run build
+```
 
-![Hover and Download](https://i.imgur.com/ZFA6ct0.jpg)
+This produces two unpacked extensions:
 
-## Profile Picture
+- **Chrome:** `.output/chrome-mv3/`
+- **Firefox:** `.output/firefox-mv3/`
 
-The same happens if you hover over the profile picture.
+### 2. Install on Chrome
 
-![Hover and Download](https://i.imgur.com/axnMJgD.png)
+1. Open `chrome://extensions`
+2. Enable **Developer mode** (toggle in the top-right corner)
+3. Click **Load unpacked**
+4. Select the `.output/chrome-mv3/` directory
+5. The extension is now active — navigate to instagram.com
 
-## Bulk Download
+To keep the extension across sessions, leave developer mode on. Chrome may show a warning on startup; dismiss it.
 
-Now it is possible to download all images and videos of one profile at once. The Button apperes right next to
-the `follow` button. The feature includes scrolling down until all images are loaded, so it may take a while. It is also
-possible that instagram will ban you temporarily (just a few minutes) if you try to download like 1000 pictures.  
-If you click on the `download all` button the page will begin scrolling down to load the new pictures until every
-picture of the profile got loaded once. After that a ZIP file with all the images in it will be created.  
-This may take a while depending on your internet connection and the amount of pictures you plan to download.
+### 3. Install on Firefox
 
-![Download all](https://i.imgur.com/8DFcGVp.png)
+Firefox supports two methods. **Temporary installation** is easier but the extension is removed when the browser closes. **Persistent installation** survives restarts.
 
-## Story Download
+#### Temporary (no restart required)
 
-From version 1.5+ it is possible to download Instagram Stories. The extension supports both image and video downloads.
+1. Open `about:debugging#/runtime/this-firefox`
+2. Click **Load Temporary Add-on...**
+3. Navigate to `.output/firefox-mv3/` and select `manifest.json`
+4. The extension loads immediately and stays active until Firefox is closed
 
-![Download Story](https://i.imgur.com/Hy3qJod.png)
+#### Persistent (survives restarts)
+
+Firefox requires extensions to be signed by Mozilla unless you use Firefox Developer Edition or Firefox Nightly with signature enforcement disabled.
+
+1. Run `npm run zip` to produce `.output/firefox-mv3-zip/*.zip`
+2. Open `about:config`, set `xpinstall.signatures.required` to `false` (only available in Developer Edition / Nightly)
+3. Open `about:addons` → gear icon → **Install Add-on From File...**
+4. Select the `.zip` file
+
+Alternatively, use the temporary method above and re-load after each restart.
+
+## Usage
+
+1. Go to [instagram.com](https://www.instagram.com) and open any post (feed, modal, or reel)
+2. A download button appears to the right of the bookmark icon in the action bar
+3. Click it — images download immediately; videos are resolved and queued automatically
+4. For carousel posts, all slides are downloaded at once
+
+Files are saved to your browser's default download directory, named by account and post shortcode.
 
 ## Development
 
-### Getting started
+```bash
+npm install
 
-The main class is (obviously) the `index.ts`. Here the different downloaders subscribe to the `URLChangeEmitter` which
-in turn notifies the different downloaders when they should be added to the page.  
-The collection of the image links is handled in the downloaders. The retrieved image links get send to the background
-script where the download happens.
+npm run dev           # wxt dev server — Chrome, with HMR
+npm run dev:firefox   # wxt dev server — Firefox
 
-### Building
+npm run typecheck     # tsc --noEmit
+npm run lint          # eslint + prettier check
+npm run lint:fix      # eslint --fix + prettier --write
+```
 
-The build script depends on linux, especially on the zip util which should be included in most linux distros. Building
-in Windows is only partially supported.  
-To Execute the build script run `npm install` and after the installation is complete execute `webpack`. There are
-different flags which change the build.
+### Source layout
 
-- _--watch_ starts the build in watch mode and rebuilds the project if files get changed
-- _--mode=production_ generates a production build without source maps and logging. In addition to these changes a zip
-  files for the different browsers will get generated and linted.
-- _--mode=development_ generates a development build with source maps and logging. No zip files get generated and no
-  linting script gets executed.
+```
+entrypoints/
+  background.ts           # MV3 service worker — handles browser.downloads API
+  content.ts              # isolated-world content script — boots AddonManager
+  main-world.content.ts   # MAIN-world script — patches history for SPA navigation
 
-The two flags can be combined if needed `webpack --mode=production --watch`.
+src/
+  core/
+    messages.ts           # shared cross-context message types
+    selectors.ts          # all Instagram DOM selectors
+    extractors.ts         # pulls media URL / author / shortcode from <article>
+    relay.ts              # video URL extraction: Relay cache reader + API fallback
+    logger.ts             # dev-only console wrapper
+  content/
+    AddonManager.ts       # wires UrlRouter → PostDownloader
+    UrlRouter.ts          # classifies location.href, fires onChange on navigation
+    PostDownloader.ts     # injects buttons, handles download click
+    ui/
+      Alert.ts            # toast notifications
+      DownloadButton.ts   # renders the download <button>
+  background/
+    download.ts           # download handler (no fetch, no blobs)
+  styles/
+    main.scss             # button styles
+    alert.scss            # toast styles
+```
+
+### Selectors
+
+All Instagram DOM queries live in `src/core/selectors.ts`. Instagram rotates its atomic CSS class names — all selectors use semantic anchors (ARIA labels, roles, structural patterns) instead of class names. If a selector breaks after an Instagram update, fix it there and verify against HTML in `references/`.
 
 ## Credits
 
-- The files get zipped with [JSZip](https://github.com/Stuk/jszip)
-- Error logging inspired by [refined-github](https://github.com/sindresorhus/refined-github)
-- The Download Icon is from [ShareIcon](https://www.shareicon.net/instagram-social-media-icons-880117) and was created
-  by [Aarthi Padmanabhan](https://www.shareicon.net/author/aarthi-padmanabhan)
-- The PayPal Icon is from [Wikipedia](https://wikipedia.org)
-- The close icon is from [Google material design icons](https://github.com/google/material-design-icons)
+- Original extension by [HuiiBuh](https://github.com/HuiiBuh/InstagramDownloader)
+- Download icon from [ShareIcon](https://www.shareicon.net/instagram-social-media-icons-880117) by [Aarthi Padmanabhan](https://www.shareicon.net/author/aarthi-padmanabhan)
