@@ -1,40 +1,98 @@
-name: Build and Publish
+name: Sign & Release (Firefox)
 
-on:  
-  workflow_dispatch:
-    inputs:
-      browser:
-        description: 'Publish <firefox>, <chrome> or <both>.'     
-        required: true
-        default: 'both'
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
 jobs:
-  publish:
+  sign-and-release:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v1
-      - uses: actions/setup-node@v1
-        with:
-          node-version: 14
-      - run: npm install
-      - run: npm run build:dev
-      - name: Publish Firefox
-        if: github.event.inputs.browser == 'firefox' || github.event.inputs.browser == 'both'
-        uses: trmcnvn/firefox-addon@v1
-        
-        with:
-          uuid: 'HuiiBuh.InstagramDownloader@github.com'
-          xpi: zip/firefox.zip
-          manifest: src/manifest_firefox.json
-          api-key: ${{ secrets.FIREFOX_API_KEY }}
-          api-secret: ${{ secrets.FIREFOX_API_SECRET }}
-    
-      - name: Publish Chrome
-        if: github.event.inputs.browser == 'chrome' || github.event.inputs.browser == 'both'
+      - uses: actions/checkout@v4
 
-        uses: trmcnvn/chrome-addon@v2
+      - uses: actions/setup-node@v4
         with:
-          extension: cpgaheeihidjmolbakklolchdplenjai
-          zip: zip/chrome.zip
-          client-id: ${{ secrets.CHROME_CLIENT_ID }}
-          client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
-          refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Derive metadata
+        id: meta
+        run: |
+          OWNER="${GITHUB_REPOSITORY_OWNER}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "updates_url=https://${OWNER}.github.io/${REPO}/updates.json" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Firefox extension
+        run: npx wxt build -b firefox --mv3
+        env:
+          UPDATES_URL: ${{ steps.meta.outputs.updates_url }}
+
+      - name: Sign extension (unlisted)
+        run: npx web-ext sign --source-dir .output/firefox-mv3 --channel unlisted
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+
+      - name: Prepare release asset
+        id: xpi
+        run: |
+          XPI=$(find web-ext-artifacts -name '*.xpi' -print -quit)
+          if [ -z "$XPI" ]; then echo "::error::No signed XPI found"; exit 1; fi
+          HASH="sha256:$(sha256sum "$XPI" | cut -d' ' -f1)"
+          FILENAME="instagram_downloader-${{ steps.meta.outputs.version }}.xpi"
+          mv "$XPI" "web-ext-artifacts/${FILENAME}"
+          echo "path=web-ext-artifacts/${FILENAME}" >> "$GITHUB_OUTPUT"
+          echo "filename=${FILENAME}" >> "$GITHUB_OUTPUT"
+          echo "hash=${HASH}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate updates.json
+        run: |
+          mkdir -p pages
+          node -e "
+            const data = {
+              addons: {
+                'instagramdownloader@ziwdon.github': {
+                  updates: [{
+                    version: process.env.VERSION,
+                    update_link: process.env.UPDATE_LINK,
+                    update_hash: process.env.UPDATE_HASH
+                  }]
+                }
+              }
+            };
+            require('fs').writeFileSync('pages/updates.json', JSON.stringify(data, null, 2) + '\n');
+          "
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          UPDATE_LINK: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.xpi.outputs.filename }}
+          UPDATE_HASH: ${{ steps.xpi.outputs.hash }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.xpi.outputs.path }}
+          generate_release_notes: true
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./pages
+
+      - name: Deploy updates.json to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
