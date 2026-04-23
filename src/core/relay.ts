@@ -10,6 +10,7 @@ interface RelayMediaItem {
   code?: string;
   pk?: string;
   video_versions?: VideoVersion[];
+  carousel_media?: RelayMediaItem[];
 }
 
 interface RelayWebInfo {
@@ -66,19 +67,27 @@ function findRelayItem(shortcode: string | null): RelayMediaItem | null {
   return null;
 }
 
-/** Synchronous: reads the Relay prefetch cache already embedded in the page DOM. */
-export function extractVideoURLFromRelay(shortcode: string | null): string | null {
+/**
+ * Synchronous: returns per-slide relay data for a post (single or carousel).
+ * Each entry maps to one media slide in order; `videoURL` is null for image slides.
+ */
+export function extractAllSlidesFromRelay(
+  shortcode: string | null,
+): Array<{ videoURL: string | null; pk: string | null }> {
   const item = findRelayItem(shortcode);
-  const versions = item?.video_versions;
-  if (!versions?.length) return null;
-  const url = pickBestURL(versions);
-  if (url) logger.log('relay cache hit for shortcode', shortcode);
-  return url;
-}
+  if (!item) return [];
 
-/** Synchronous: returns the numeric media ID from the relay cache (needed for API fallback). */
-export function extractMediaIdFromRelay(shortcode: string | null): string | null {
-  return findRelayItem(shortcode)?.pk ?? null;
+  if (item.carousel_media?.length) {
+    logger.log('relay carousel hit for shortcode', shortcode);
+    return item.carousel_media.map((slide) => ({
+      videoURL: slide.video_versions?.length ? pickBestURL(slide.video_versions) : null,
+      pk: slide.pk ?? null,
+    }));
+  }
+
+  const videoURL = item.video_versions?.length ? pickBestURL(item.video_versions) : null;
+  if (videoURL) logger.log('relay cache hit for shortcode', shortcode);
+  return [{ videoURL, pk: item.pk ?? null }];
 }
 
 /** Async fallback: fetches media info from the Instagram API using the session cookie. */

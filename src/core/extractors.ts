@@ -1,4 +1,11 @@
-import { AUTHOR_LINK, CAROUSEL_ACTIVE, PERMALINK, POST_IMG, POST_VIDEO } from './selectors';
+import {
+  AUTHOR_LINK,
+  CAROUSEL_ACTIVE,
+  CAROUSEL_SLIDES,
+  PERMALINK,
+  POST_IMG,
+  POST_VIDEO,
+} from './selectors';
 
 export function extractAuthor(article: HTMLElement): string {
   const a = article.querySelector(AUTHOR_LINK.join(',')) as HTMLAnchorElement | null;
@@ -25,6 +32,36 @@ export function extractCurrentMediaURL(
   if (img) return { url: pickBestSrc(img), kind: 'image' };
 
   return null;
+}
+
+/**
+ * Returns one entry per media slide in the post.
+ * For carousel posts every slide is included; for single posts the array has one entry.
+ * Video slide URLs from the DOM may be empty for non-active slides — callers should
+ * overlay them with relay/API URLs before downloading.
+ */
+export function extractAllMediaURLs(
+  article: HTMLElement,
+): Array<{ url: string; kind: 'image' | 'video' }> {
+  const slides = Array.from(article.querySelectorAll<HTMLElement>(CAROUSEL_SLIDES));
+
+  if (slides.length === 0) {
+    // Single post — no carousel wrapper
+    const m = extractCurrentMediaURL(article);
+    return m ? [m] : [];
+  }
+
+  const results: Array<{ url: string; kind: 'image' | 'video' }> = [];
+  for (const slide of slides) {
+    const video = slide.querySelector<HTMLVideoElement>(POST_VIDEO);
+    if (video) {
+      results.push({ url: video.currentSrc, kind: 'video' });
+      continue;
+    }
+    const img = slide.querySelector<HTMLImageElement>(POST_IMG.join(','));
+    if (img) results.push({ url: pickBestSrc(img), kind: 'image' });
+  }
+  return results;
 }
 
 function pickBestSrc(img: HTMLImageElement): string {

@@ -1,11 +1,7 @@
 import browser from 'webextension-polyfill';
 import { ACTION_BAR, POST_ARTICLE, SAVE_SVG } from '../core/selectors';
-import { extractAuthor, extractCurrentMediaURL, extractShortcode } from '../core/extractors';
-import {
-  extractMediaIdFromRelay,
-  extractVideoURLFromRelay,
-  fetchVideoURLFromAPI,
-} from '../core/relay';
+import { extractAllMediaURLs, extractAuthor, extractShortcode } from '../core/extractors';
+import { extractAllSlidesFromRelay, fetchVideoURLFromAPI } from '../core/relay';
 import type { DownloadRequest } from '../core/messages';
 import { Alert } from './ui/Alert';
 import { createDownloadButton } from './ui/DownloadButton';
@@ -66,38 +62,62 @@ export class PostDownloader {
   }
 
   async onClick(article: HTMLElement): Promise<void> {
-    const media = extractCurrentMediaURL(article);
-    if (!media) {
+    const allMedia = extractAllMediaURLs(article);
+    if (allMedia.length === 0) {
       Alert.warn('Could not locate media in this post');
       return;
     }
 
     const shortcode = extractShortcode(article);
-    let downloadURL = media.url;
+    const accountName = extractAuthor(article);
+    const isMulti = allMedia.length > 1;
 
-    if (media.kind === 'video') {
-      let videoURL = extractVideoURLFromRelay(shortcode);
-      if (!videoURL) {
-        const mediaId = extractMediaIdFromRelay(shortcode);
-        if (mediaId) videoURL = await fetchVideoURLFromAPI(mediaId);
+    // Relay data keyed by slide index (covers single and carousel posts).
+    const relaySlides = extractAllSlidesFromRelay(shortcode);
+
+    // Resolve the final download URL for each slide.
+    const resolvedURLs: Array<string | null> = [];
+    for (let i = 0; i < allMedia.length; i++) {
+      const media = allMedia[i]!;
+      if (media.kind === 'image') {
+        resolvedURLs.push(media.url);
+        continue;
       }
+      // Video slide: prefer relay, fall back to API, then DOM currentSrc.
+      const relaySlide = relaySlides[i];
+      let videoURL: string | null = relaySlide?.videoURL ?? null;
       if (!videoURL) {
-        Alert.warn('Could not resolve video URL — please try again or report at GitHub');
-        return;
+        const pk = relaySlide?.pk ?? null;
+        if (pk) videoURL = await fetchVideoURLFromAPI(pk);
       }
-      downloadURL = videoURL;
+      resolvedURLs.push(videoURL || media.url || null);
     }
 
-    const req: DownloadRequest = {
-      kind: 'download',
-      mediaURL: downloadURL,
-      accountName: extractAuthor(article),
-      ...(shortcode !== null && { postShortcode: shortcode }),
-    };
-    try {
-      await browser.runtime.sendMessage(req);
-    } catch (e) {
-      Alert.error(`Download failed: ${String(e)}`);
+    // Bail early if every video slide failed to resolve.
+    const videoIndices = allMedia
+      .map((m, i) => (m.kind === 'video' ? i : -1))
+      .filter((i) => i >= 0);
+    if (videoIndices.length > 0 && videoIndices.every((i) => !resolvedURLs[i])) {
+      Alert.warn('Could not resolve video URL — please try again or report at GitHub');
+      return;
+    }
+
+    // Dispatch one download request per slide.
+    for (let i = 0; i < resolvedURLs.length; i++) {
+      const url = resolvedURLs[i];
+      if (!url) continue;
+      const req: DownloadRequest = {
+        kind: 'download',
+        mediaURL: url,
+        accountName,
+        ...(shortcode !== null && { postShortcode: shortcode }),
+        ...(isMulti && { index: i + 1 }),
+      };
+      try {
+        await browser.runtime.sendMessage(req);
+      } catch (e) {
+        Alert.error(`Download failed: ${String(e)}`);
+      }
     }
   }
 }

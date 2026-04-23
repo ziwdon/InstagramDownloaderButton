@@ -5,7 +5,10 @@ const IS_FIREFOX = import.meta.env.BROWSER === 'firefox';
 
 export async function handleDownload(req: DownloadRequest): Promise<void> {
   const ext = guessExtension(req.mediaURL);
-  const filename = sanitize(`${req.accountName}_${req.postShortcode ?? Date.now()}${ext}`);
+  const indexSuffix = req.index !== undefined ? `_${req.index}` : '';
+  const filename = sanitize(
+    `${req.accountName}_${req.postShortcode ?? Date.now()}${indexSuffix}${ext}`,
+  );
 
   try {
     await browser.downloads.download({ url: req.mediaURL, filename });
