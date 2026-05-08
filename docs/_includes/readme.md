@@ -53,39 +53,6 @@ npm run lint          # eslint + prettier check
 npm run lint:fix      # eslint --fix + prettier --write
 ```
 
-### Source layout
-
-```
-entrypoints/
-  background.ts           # MV3 service worker — handles browser.downloads API
-  content.ts              # isolated-world content script — boots AddonManager
-  main-world.content.ts   # MAIN-world script — patches history for SPA navigation
-
-src/
-  core/
-    messages.ts           # shared cross-context message types
-    selectors.ts          # all Instagram DOM selectors
-    extractors.ts         # pulls media URL / author / shortcode from <article>
-    relay.ts              # video URL extraction: Relay cache reader + API fallback
-    logger.ts             # dev-only console wrapper
-  content/
-    AddonManager.ts       # wires UrlRouter → PostDownloader
-    UrlRouter.ts          # classifies location.href, fires onChange on navigation
-    PostDownloader.ts     # injects buttons, handles download click
-    ui/
-      Alert.ts            # toast notifications
-      DownloadButton.ts   # renders the download <button>
-  background/
-    download.ts           # download handler (no fetch, no blobs)
-  styles/
-    main.scss             # button styles
-    alert.scss            # toast styles
-```
-
-### Selectors
-
-All Instagram DOM queries live in `src/core/selectors.ts`. Instagram rotates its atomic CSS class names — all selectors use semantic anchors (ARIA labels, roles, structural patterns) instead of class names. If a selector breaks after an Instagram update, fix it there and verify against HTML in `references/`.
-
 ## Releasing a new version
 
 Releases are automatic. When a commit is pushed to `master` with a bumped version in `package.json`, the GitHub Actions workflow creates the tag, builds the Firefox extension, signs it as unlisted via `web-ext sign`, creates a GitHub Release with the signed XPI, and deploys `updates.json` to GitHub Pages for automatic updates.
