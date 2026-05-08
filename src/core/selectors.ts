@@ -21,6 +21,7 @@ export const PERMALINK = 'a[href*="/p/"], a[href*="/reel/"]';
 export const POST_IMG = [
   'img[alt^="Photo by "]',
   'img[alt^="May be "]',
+  'div._aagu img',
   'ul img[src*="fbcdn"]',
 ] as const;
 
