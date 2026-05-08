@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-A browser extension that adds a one-click download button to individual Instagram posts. Supports Chrome and Firefox via Manifest V3. Built with `wxt` (Vite-based), TypeScript 5 strict, ESLint + Prettier. The `migration/mv3` branch is the active development branch; `master` is the upstream baseline.
+A browser extension that adds a one-click download button to individual Instagram posts. Supports Chrome and Firefox via Manifest V3. Built with `wxt` (Vite-based), TypeScript 5 strict, ESLint + Prettier. `master` is the main branch.
 
 Features in scope: per-post download button (images and videos). Out of scope (removed): `Ctrl+Shift+D` hotkey, bulk downloader, story downloader, account-image downloader, options UI.
 
@@ -24,6 +24,14 @@ npm run amo-lint         # addons-linter on .output/firefox-mv3-zip/*.zip
 ```
 
 Build outputs: `.output/chrome-mv3/` and `.output/firefox-mv3/` (unpacked), `.output/*-zip/` (store-ready). No `dist/` or `zip/` directories.
+
+## Releasing
+
+Releases are automatic. To cut a release:
+1. Bump `version` in both `package.json` and `wxt.config.ts`.
+2. Commit and merge to `master`.
+
+The `publish.yml` workflow detects the version bump (compares `package.json` against the latest `v*` tag), creates the tag, builds the Firefox extension, signs it via `web-ext sign`, creates a GitHub Release, and deploys `updates.json` to GitHub Pages. No manual tagging needed.
 
 ## Architecture
 
