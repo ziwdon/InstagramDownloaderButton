@@ -88,7 +88,7 @@ All Instagram DOM queries live in `src/core/selectors.ts`. Instagram rotates its
 
 ## Releasing a new version
 
-Releases are tag-triggered. The GitHub Actions workflow builds the Firefox extension, signs it as unlisted via `web-ext sign`, creates a GitHub Release with the signed XPI, and deploys `updates.json` to GitHub Pages for automatic updates.
+Releases are automatic. When a commit is pushed to `master` with a bumped version in `package.json`, the GitHub Actions workflow creates the tag, builds the Firefox extension, signs it as unlisted via `web-ext sign`, creates a GitHub Release with the signed XPI, and deploys `updates.json` to GitHub Pages for automatic updates.
 
 ### One-time setup
 
@@ -103,16 +103,13 @@ Go to **https://addons.mozilla.org/en-US/developers/addon/api/key/** and generat
 
 #### GitHub Pages
 
-Go to **Settings → Pages** and set **Source** to **GitHub Actions**. A `github-pages` environment is usually created automatically — check under **Settings → Environments**. In the environment's deployment rules, add a tag pattern `v*` so that release tags are allowed to deploy.
+Go to **Settings → Pages** and set **Source** to **GitHub Actions**. A `github-pages` environment is usually created automatically — check under **Settings → Environments**. In the environment's deployment rules, add the `master` branch so that pushes to `master` are allowed to deploy.
 
 ### Publishing
 
 1. Bump `version` in both `wxt.config.ts` and `package.json`.
-2. Commit, tag, and push:
-   ```bash
-   git tag vX.Y.Z && git push && git push origin vX.Y.Z
-   ```
-3. The workflow runs automatically: build → sign → GitHub Release → deploy `updates.json`.
+2. Commit and push (or open a PR and merge to `master`). The release is created automatically.
+3. The workflow detects the version bump, creates the tag, and runs: build → sign → GitHub Release → deploy `updates.json`.
 4. Installed extensions update silently via `updates.json`.
 
 ## Credits
