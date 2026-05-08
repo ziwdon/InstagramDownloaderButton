@@ -116,11 +116,13 @@ All cross-context communication is typed via `ExtensionMessage = DownloadRequest
 Video CDN URLs are not in `srcset` — the `<video>` element only exposes an HLS blob or a short-lived URL that often fails to download. The real MP4 URL comes from the Instagram Relay GraphQL cache embedded in the page as `<script type="application/json" data-sjs>` tags.
 
 Resolution order in `PostDownloader.onClick()`:
-1. `extractVideoURLFromRelay(shortcode)` — scans those `<script>` tags for `xdt_api__v1__media__shortcode__web_info`, finds the matching `code`, picks the best `video_versions` entry (prefers `type === 101`).
-2. If that misses, `extractMediaIdFromRelay(shortcode)` gets the numeric `pk`, then `fetchVideoURLFromAPI(mediaId)` hits `https://www.instagram.com/api/v1/media/{id}/info/` with `credentials: 'include'`.
-3. If both fail, a toast is shown and the download is aborted.
+1. `extractAllSlidesFromRelay(shortcode)` — scans those `<script>` tags for `xdt_api__v1__media__shortcode__web_info`, finds the matching `code`, returns one entry per slide with `video_versions` (prefers `type === 101`), `image_versions2`, and `pk`. `pickActiveRelaySlide()` picks the entry that matches `findActiveSlide()`'s carousel index.
+2. If the relay slide has no `videoURL` but has a `pk`, `fetchVideoURLFromAPI(pk)` hits `https://www.instagram.com/api/v1/media/{id}/info/` with `credentials: 'include'`.
+3. If both fail, the DOM `<video>.currentSrc` is used as a last resort (filtered out if it's a `blob:` URL, which can't cross the content-script → service-worker boundary). Otherwise a toast is shown and the download is aborted.
 
 The API fetch runs in the content script (not the background), so session cookies are available automatically.
+
+**Known limitation — feed-scoped relay key:** the extractor only scans `xdt_api__v1__media__shortcode__web_info`, which is present on permalink (post / reel / video) pages but **absent on feed pages** (home, profile feed, channel feed). On feed pages the same data is keyed under `xdt_api__v1__feed__timeline__connection` with a different shape: `edges[*].node.media.{video_versions, image_versions2, carousel_media, pk, code}`. As a result, video downloads from the feed currently fail with "Could not resolve video URL …" because `extractAllSlidesFromRelay` returns `[]` and the API fallback never fires (no `pk`). A fix would add a second extraction path that walks `xdt_api__v1__feed__timeline__connection` edges, matches by `code === shortcode`, and projects to the same per-slide return shape.
 
 ### Background constraints (MV3 service worker)
 
