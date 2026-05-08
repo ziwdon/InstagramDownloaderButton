@@ -6,7 +6,7 @@ export default defineConfig({
   manifest: ({ browser }) => ({
     name: 'Instagram Downloader Button',
     description: 'One-click download button per Instagram post.',
-    version: '1.1.0',
+    version: '1.1.1',
     icons: {
       16: 'icons/icon-16.png',
       32: 'icons/icon-32.png',

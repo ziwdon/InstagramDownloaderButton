@@ -43,22 +43,24 @@ export class PostDownloader {
     const saveSvg = article.querySelector<SVGElement>(SAVE_SVG);
     if (!saveSvg) return;
 
-    // Find the action bar section and get its direct child (the buttons row)
     const section = article.querySelector<HTMLElement>(ACTION_BAR.join(','));
     if (!section) return;
-    const row = section.firstElementChild as HTMLElement | null;
-    if (!row || row.querySelector(`.${BTN_CLASS}`)) return;
+    if (section.querySelector(`.${BTN_CLASS}`)) return;
 
-    // Walk up from the Save SVG to find its ancestor that is a direct child of row
-    let saveWrapper: Element | null = saveSvg;
-    while (saveWrapper && saveWrapper.parentElement !== row) {
-      saveWrapper = saveWrapper.parentElement;
+    // Walk up from the Save SVG to find its ancestor that is a direct child of
+    // the section. Save's position varies: in feed posts it sits inside a
+    // right-aligned wrapper div (section's second child); on permalink/reel
+    // pages it's a sibling <span> alongside Like/Comment/Share. Either way the
+    // wrapper we want is the one whose parent is the section itself.
+    let saveOuter: Element | null = saveSvg;
+    while (saveOuter && saveOuter.parentElement !== section) {
+      saveOuter = saveOuter.parentElement;
     }
-    if (!saveWrapper) return;
+    if (!saveOuter) return;
 
     const btn = createDownloadButton(() => void this.onClick(article));
     btn.classList.add(BTN_CLASS);
-    row.insertBefore(btn, saveWrapper.nextSibling);
+    section.insertBefore(btn, saveOuter);
   }
 
   async onClick(article: HTMLElement): Promise<void> {
