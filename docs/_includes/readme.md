@@ -115,6 +115,40 @@ src/
 
 All Instagram DOM queries live in `src/core/selectors.ts`. Instagram rotates its atomic CSS class names — all selectors use semantic anchors (ARIA labels, roles, structural patterns) instead of class names. If a selector breaks after an Instagram update, fix it there and verify against HTML in `references/`.
 
+## Release (Firefox unlisted signing + automatic updates)
+
+Releases are handled by a tag-triggered GitHub Actions workflow. Pushing a `v*` tag builds the Firefox extension, signs it as **unlisted** via `web-ext sign`, creates a GitHub Release with the signed XPI, and deploys an `updates.json` to GitHub Pages so Firefox can auto-update the extension.
+
+### Setup required before first release
+
+#### 1. AMO API credentials
+
+Go to **https://addons.mozilla.org/en-US/developers/addon/api/key/** (sign in with a Firefox Account) and generate API credentials. Then add them as **repository secrets** in GitHub (**Settings → Secrets and variables → Actions → New repository secret**):
+
+| Secret name | Value |
+|---|---|
+| `AMO_JWT_ISSUER` | The **JWT issuer** (starts with `user:...`) |
+| `AMO_JWT_SECRET` | The **JWT secret** |
+
+#### 2. Enable GitHub Pages
+
+Go to **Settings → Pages** and set **Source** to **GitHub Actions**. This allows the workflow to deploy `updates.json` without a separate `gh-pages` branch.
+
+#### 3. Create a `github-pages` environment
+
+Go to **Settings → Environments**. If a `github-pages` environment doesn't already exist, create one (GitHub usually auto-creates it when you enable Pages). No special protection rules are needed for a personal repo.
+
+#### 4. Releasing a new version
+
+1. Bump `version` in both `wxt.config.ts` and `package.json`.
+2. Commit and tag: `git tag v5.0.0 && git push origin v5.0.0`
+3. The workflow runs automatically: build → sign → release → deploy updates.json.
+4. Firefox checks `updates.json` periodically and silently installs the new version.
+
+#### 5. First install
+
+After the first release, download the signed `.xpi` from the GitHub Release and open it in Firefox (or drag it onto `about:addons`). Subsequent updates are automatic.
+
 ## Credits
 
 - Original extension by [HuiiBuh](https://github.com/HuiiBuh/InstagramDownloader)

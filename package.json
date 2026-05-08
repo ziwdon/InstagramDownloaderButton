@@ -1,6 +1,6 @@
 {
   "name": "instagram-downloader-button",
-  "version": "5.0.0",
+  "version": "1.0.0",
   "description": "One-click download button per Instagram post. MV3 for Chrome and Firefox.",
   "license": "LGPL-3.0",
   "scripts": {
@@ -20,6 +20,7 @@
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "addons-linter": "^6.0.0",
+    "web-ext": "^8.0.0",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^9.0.0",
     "prettier": "^3.0.0",
