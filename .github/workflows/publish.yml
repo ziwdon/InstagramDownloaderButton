@@ -2,7 +2,7 @@ name: Sign & Release (Firefox)
 
 on:
   push:
-    tags: ['v*']
+    branches: ['master']
 
 permissions:
   contents: write
@@ -17,29 +17,67 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
+      - name: Check if version is new
+        id: version_check
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          LATEST_TAG=$(git tag --sort=-v:refname | grep '^v' | head -1)
+          LATEST=${LATEST_TAG#v}
+          if [ -z "$LATEST" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "version=${CURRENT}" >> "$GITHUB_OUTPUT"
+          elif [ "$CURRENT" = "$LATEST" ]; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "version=${CURRENT}" >> "$GITHUB_OUTPUT"
+          else
+            HIGHER=$(printf '%s\n' "$LATEST" "$CURRENT" | sort -V | tail -1)
+            if [ "$HIGHER" = "$CURRENT" ]; then
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+            fi
+            echo "version=${CURRENT}" >> "$GITHUB_OUTPUT"
+          fi
+
       - run: npm ci
+        if: steps.version_check.outputs.should_release == 'true'
 
       - name: Derive metadata
         id: meta
+        if: steps.version_check.outputs.should_release == 'true'
         run: |
           OWNER="${GITHUB_REPOSITORY_OWNER}"
           REPO="${GITHUB_REPOSITORY#*/}"
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ steps.version_check.outputs.version }}"
+          TAG="v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --tags origin "${TAG}" | grep -q "${TAG}"; then
+            echo "Tag ${TAG} already exists, skipping tag creation"
+          else
+            git tag "${TAG}"
+            git push origin "${TAG}"
+          fi
           echo "updates_url=https://${OWNER}.github.io/${REPO}/updates.json" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Build Firefox extension
+        if: steps.version_check.outputs.should_release == 'true'
         run: npx wxt build -b firefox --mv3
         env:
           UPDATES_URL: ${{ steps.meta.outputs.updates_url }}
 
       - name: Sign extension (unlisted)
+        if: steps.version_check.outputs.should_release == 'true'
         run: npx web-ext sign --source-dir .output/firefox-mv3 --channel unlisted
         env:
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
@@ -47,6 +85,7 @@ jobs:
 
       - name: Prepare release asset
         id: xpi
+        if: steps.version_check.outputs.should_release == 'true'
         run: |
           XPI=$(find web-ext-artifacts -name '*.xpi' -print -quit)
           if [ -z "$XPI" ]; then echo "::error::No signed XPI found"; exit 1; fi
@@ -58,6 +97,7 @@ jobs:
           echo "hash=${HASH}" >> "$GITHUB_OUTPUT"
 
       - name: Generate updates.json
+        if: steps.version_check.outputs.should_release == 'true'
         run: |
           mkdir -p pages
           node -e "
@@ -76,23 +116,28 @@ jobs:
           "
         env:
           VERSION: ${{ steps.meta.outputs.version }}
-          UPDATE_LINK: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.xpi.outputs.filename }}
+          UPDATE_LINK: https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}/${{ steps.xpi.outputs.filename }}
           UPDATE_HASH: ${{ steps.xpi.outputs.hash }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
+        if: steps.version_check.outputs.should_release == 'true'
         with:
+          tag_name: ${{ steps.meta.outputs.tag }}
           files: ${{ steps.xpi.outputs.path }}
           generate_release_notes: true
 
       - name: Configure Pages
+        if: steps.version_check.outputs.should_release == 'true'
         uses: actions/configure-pages@v5
 
       - name: Upload pages artifact
+        if: steps.version_check.outputs.should_release == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./pages
 
       - name: Deploy updates.json to GitHub Pages
         id: deploy
+        if: steps.version_check.outputs.should_release == 'true'
         uses: actions/deploy-pages@v4
