@@ -6,7 +6,7 @@ export default defineConfig({
   manifest: ({ browser }) => ({
     name: 'Instagram Downloader',
     description: 'One-click download button per Instagram post.',
-    version: '5.0.0',
+    version: '1.0.0',
     action: { default_title: 'Instagram Downloader' },
     permissions: ['downloads'],
     host_permissions: ['*://*.instagram.com/*', '*://*.cdninstagram.com/*', '*://*.fbcdn.net/*'],
