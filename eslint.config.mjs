@@ -13,6 +13,6 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['.output/**', 'node_modules/**', '.wxt/**'],
+    ignores: ['.output/**', 'node_modules/**', '.wxt/**', 'references/**', 'docs/**'],
   },
 );

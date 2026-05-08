@@ -1,67 +1,94 @@
-import {
-  AUTHOR_LINK,
-  CAROUSEL_ACTIVE,
-  CAROUSEL_SLIDES,
-  PERMALINK,
-  POST_IMG,
-  POST_VIDEO,
-} from './selectors';
+import { AUTHOR_LINK, CAROUSEL_SLIDE_MEDIA, PERMALINK, POST_IMG, POST_VIDEO } from './selectors';
 
-export function extractAuthor(article: HTMLElement): string {
-  const a = article.querySelector(AUTHOR_LINK.join(',')) as HTMLAnchorElement | null;
+export function extractAuthor(scope: HTMLElement): string {
+  const a = scope.querySelector(AUTHOR_LINK.join(',')) as HTMLAnchorElement | null;
   if (!a) return 'unknown';
   return a.getAttribute('href')?.replace(/^\/|\/$/g, '') ?? 'unknown';
 }
 
-export function extractShortcode(article: HTMLElement): string | null {
-  const a = article.querySelector(PERMALINK) as HTMLAnchorElement | null;
+export function extractShortcode(scope: HTMLElement): string | null {
+  const a = scope.querySelector(PERMALINK) as HTMLAnchorElement | null;
   const m = a?.getAttribute('href')?.match(/\/(?:p|reel)\/([^/]+)\//);
   return m?.[1] ?? null;
 }
 
 export function extractCurrentMediaURL(
-  article: HTMLElement,
+  scope: HTMLElement,
 ): { url: string; kind: 'image' | 'video' } | null {
-  const activeSlide = article.querySelector(CAROUSEL_ACTIVE) as HTMLElement | null;
-  const scope = activeSlide ?? article;
+  const active = findActiveCarouselSlide(scope);
+  if (active) {
+    const result = extractFromScope(active);
+    if (result) return result;
+  }
+  return extractFromScope(scope);
+}
 
-  const video = scope.querySelector(POST_VIDEO) as HTMLVideoElement | null;
+/**
+ * Returns the index of the visually active slide and the post carousel <ul>,
+ * or null when the post is not a carousel. Used by the relay/API path to map
+ * a DOM slide back to its carousel position.
+ */
+export function findActiveSlide(scope: HTMLElement): { index: number; total: number } | null {
+  const ul = findPostCarouselUL(scope);
+  if (!ul) return null;
+  const slides = mediaCarriers(ul);
+  if (slides.length === 0) return null;
+  const active = pickActiveSlide(ul, slides);
+  const index = slides.indexOf(active);
+  return { index: index >= 0 ? index : 0, total: slides.length };
+}
+
+function extractFromScope(s: HTMLElement): { url: string; kind: 'image' | 'video' } | null {
+  const video = s.querySelector(POST_VIDEO) as HTMLVideoElement | null;
   if (video) return { url: video.currentSrc, kind: 'video' };
 
-  const img = scope.querySelector(POST_IMG.join(',')) as HTMLImageElement | null;
+  const img = s.querySelector(POST_IMG.join(',')) as HTMLImageElement | null;
   if (img) return { url: pickBestSrc(img), kind: 'image' };
 
   return null;
 }
 
-/**
- * Returns one entry per media slide in the post.
- * For carousel posts every slide is included; for single posts the array has one entry.
- * Video slide URLs from the DOM may be empty for non-active slides — callers should
- * overlay them with relay/API URLs before downloading.
- */
-export function extractAllMediaURLs(
-  article: HTMLElement,
-): Array<{ url: string; kind: 'image' | 'video' }> {
-  const slides = Array.from(article.querySelectorAll<HTMLElement>(CAROUSEL_SLIDES));
+function findActiveCarouselSlide(scope: HTMLElement): HTMLElement | null {
+  const ul = findPostCarouselUL(scope);
+  if (!ul) return null;
+  const slides = mediaCarriers(ul);
+  if (slides.length === 0) return null;
+  return pickActiveSlide(ul, slides);
+}
 
-  if (slides.length === 0) {
-    // Single post — no carousel wrapper
-    const m = extractCurrentMediaURL(article);
-    return m ? [m] : [];
+// The post's carousel <ul> is the first one in DOM order whose direct <li>
+// children carry post media. This skips suggestion rails, comments, etc.,
+// which are also <ul>-based but contain other content.
+function findPostCarouselUL(scope: HTMLElement): HTMLUListElement | null {
+  for (const ul of scope.querySelectorAll<HTMLUListElement>('ul')) {
+    if (mediaCarriers(ul).length > 0) return ul;
   }
+  return null;
+}
 
-  const results: Array<{ url: string; kind: 'image' | 'video' }> = [];
-  for (const slide of slides) {
-    const video = slide.querySelector<HTMLVideoElement>(POST_VIDEO);
-    if (video) {
-      results.push({ url: video.currentSrc, kind: 'video' });
-      continue;
-    }
-    const img = slide.querySelector<HTMLImageElement>(POST_IMG.join(','));
-    if (img) results.push({ url: pickBestSrc(img), kind: 'image' });
+function mediaCarriers(ul: HTMLUListElement): HTMLLIElement[] {
+  const result: HTMLLIElement[] = [];
+  for (const li of ul.querySelectorAll<HTMLLIElement>(':scope > li')) {
+    if (li.querySelector(CAROUSEL_SLIDE_MEDIA)) result.push(li);
   }
-  return results;
+  return result;
+}
+
+// The visually active slide is the one with the largest horizontal overlap
+// with the carousel viewport. Works for both the legacy tabindex-based
+// carousel and the newer one where every real slide has tabindex="-1" and
+// position is driven by transform translateX().
+function pickActiveSlide(ul: HTMLUListElement, slides: HTMLLIElement[]): HTMLLIElement {
+  if (slides.length === 1) return slides[0]!;
+  const ulRect = ul.getBoundingClientRect();
+  let best: { li: HTMLLIElement; overlap: number } | null = null;
+  for (const li of slides) {
+    const r = li.getBoundingClientRect();
+    const overlap = Math.max(0, Math.min(r.right, ulRect.right) - Math.max(r.left, ulRect.left));
+    if (overlap <= 0) continue;
+    if (!best || overlap > best.overlap) best = { li, overlap };
+  }
+  return best?.li ?? slides[0]!;
 }
 
 function pickBestSrc(img: HTMLImageElement): string {

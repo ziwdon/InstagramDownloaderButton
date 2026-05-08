@@ -1,12 +1,24 @@
 import browser from 'webextension-polyfill';
-import { ACTION_BAR, POST_ARTICLE, SAVE_SVG } from '../core/selectors';
-import { extractAllMediaURLs, extractAuthor, extractShortcode } from '../core/extractors';
+import { ACTION_BAR, SAVE_SVG } from '../core/selectors';
+import {
+  extractAuthor,
+  extractCurrentMediaURL,
+  extractShortcode,
+  findActiveSlide,
+} from '../core/extractors';
 import { extractAllSlidesFromRelay, fetchVideoURLFromAPI } from '../core/relay';
 import type { DownloadRequest } from '../core/messages';
 import { Alert } from './ui/Alert';
 import { createDownloadButton } from './ui/DownloadButton';
 
 const BTN_CLASS = 'igdl-btn';
+
+const NON_POST_IMG_ALT_SUFFIXES = [
+  'profile picture',
+  'profile photo',
+  'highlight story picture',
+  'highlight cover image',
+] as const;
 
 export class PostDownloader {
   private observer: MutationObserver | null = null;
@@ -34,16 +46,22 @@ export class PostDownloader {
     this.scanTimer = setTimeout(() => this.scan(), 120);
   }
 
+  // Anchor on Save SVGs — there is exactly one per post and it works on every
+  // page variant (feed, modal, permalink). Permalink pages no longer use
+  // <article> wrappers, so deriving the post container from the Save SVG is the
+  // only reliable approach across all routes.
   private scan(): void {
-    const articles = document.querySelectorAll<HTMLElement>(POST_ARTICLE.join(','));
-    for (const article of articles) this.ensureButton(article);
+    const saveSvgs = document.querySelectorAll<SVGElement>(SAVE_SVG);
+    for (const svg of saveSvgs) {
+      const container = findPostContainer(svg);
+      if (container) this.ensureButton(container, svg);
+    }
   }
 
-  private ensureButton(article: HTMLElement): void {
-    const saveSvg = article.querySelector<SVGElement>(SAVE_SVG);
-    if (!saveSvg) return;
-
-    const section = article.querySelector<HTMLElement>(ACTION_BAR.join(','));
+  private ensureButton(container: HTMLElement, saveSvg: SVGElement): void {
+    const section =
+      saveSvg.closest<HTMLElement>('section') ??
+      container.querySelector<HTMLElement>(ACTION_BAR.join(','));
     if (!section) return;
     if (section.querySelector(`.${BTN_CLASS}`)) return;
 
@@ -58,111 +76,112 @@ export class PostDownloader {
     }
     if (!saveOuter) return;
 
-    const btn = createDownloadButton(() => void this.onClick(article));
+    const btn = createDownloadButton(() => void this.onClick(container));
     btn.classList.add(BTN_CLASS);
     section.insertBefore(btn, saveOuter);
   }
 
-  async onClick(article: HTMLElement): Promise<void> {
-    const allMedia = extractAllMediaURLs(article);
-    if (allMedia.length === 0) {
+  async onClick(container: HTMLElement): Promise<void> {
+    const media = extractCurrentMediaURL(container);
+    if (!media) {
       Alert.warn('Could not locate media in this post');
       return;
     }
 
-    const shortcode = extractShortcode(article);
-    const accountName = extractAuthor(article);
+    const shortcode = extractShortcode(container);
+    const accountName = extractAuthor(container);
 
-    // Relay data keyed by slide index (covers single and carousel posts).
-    const relaySlides = extractAllSlidesFromRelay(shortcode);
-    // Use relay count as authoritative total — it includes virtualized off-screen slides.
-    const totalSlides = Math.max(allMedia.length, relaySlides.length);
-    const isMulti = totalSlides > 1;
+    let downloadURL: string | null = null;
 
-    // Resolve the final download URL for each slide.
-    const resolvedURLs: Array<string | null> = [];
-    const isVideoSlot: boolean[] = [];
-
-    for (let i = 0; i < totalSlides; i++) {
-      const media = allMedia[i]; // undefined for off-screen (virtualized) slides
-      const relaySlide = relaySlides[i];
-
-      if (media) {
-        if (media.kind === 'image') {
-          isVideoSlot.push(false);
-          resolvedURLs.push(media.url);
-          continue;
-        }
-        // Video slide: prefer relay, fall back to API.
-        // Filter blob URLs — they are scope-locked to the content script and
-        // cannot be passed to the background service worker.
-        isVideoSlot.push(true);
-        let videoURL: string | null = relaySlide?.videoURL ?? null;
-        if (!videoURL) {
-          const pk = relaySlide?.pk ?? null;
-          if (pk) videoURL = await fetchVideoURLFromAPI(pk);
-        }
-        const domUrl = media.url && !media.url.startsWith('blob:') ? media.url : null;
-        resolvedURLs.push(videoURL ?? domUrl);
-      } else {
-        // Off-screen slide: DOM has no content — recover exclusively from relay.
-        if (!relaySlide) {
-          isVideoSlot.push(false);
-          resolvedURLs.push(null);
-          continue;
-        }
-        if (relaySlide.videoURL) {
-          isVideoSlot.push(true);
-          resolvedURLs.push(relaySlide.videoURL);
-        } else if (relaySlide.pk) {
-          // pk present but no relay videoURL — try API (could be video or image).
-          const videoURL = await fetchVideoURLFromAPI(relaySlide.pk);
-          if (videoURL) {
-            isVideoSlot.push(true);
-            resolvedURLs.push(videoURL);
-          } else {
-            isVideoSlot.push(false);
-            resolvedURLs.push(relaySlide.imageURL);
-          }
-        } else {
-          isVideoSlot.push(false);
-          resolvedURLs.push(relaySlide.imageURL);
-        }
+    if (media.kind === 'image') {
+      downloadURL = nonBlobOrNull(media.url);
+    } else {
+      // Video: prefer relay/API URL — the DOM <video> often has an HLS blob or
+      // a short-lived URL that fails to download.
+      const relaySlides = extractAllSlidesFromRelay(shortcode);
+      const slide = pickActiveRelaySlide(container, relaySlides);
+      let videoURL = slide?.videoURL ?? null;
+      if (!videoURL && slide?.pk) {
+        videoURL = await fetchVideoURLFromAPI(slide.pk);
       }
+      downloadURL = videoURL ?? nonBlobOrNull(media.url);
     }
 
-    // Bail early if every video slot failed to resolve.
-    const videoIndices = isVideoSlot.map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
-    if (videoIndices.length > 0 && videoIndices.every((i) => !resolvedURLs[i])) {
-      Alert.warn('Could not resolve video URL — please try again or report at GitHub');
+    if (!downloadURL) {
+      Alert.warn(
+        media.kind === 'video'
+          ? 'Could not resolve video URL — please try again or report at GitHub'
+          : 'Could not locate media in this post',
+      );
       return;
     }
 
-    // Dispatch one download request per resolved slide.
-    let skipped = 0;
-    for (let i = 0; i < resolvedURLs.length; i++) {
-      const url = resolvedURLs[i];
-      if (!url) {
-        skipped++;
-        continue;
-      }
-      const req: DownloadRequest = {
-        kind: 'download',
-        mediaURL: url,
-        accountName,
-        ...(shortcode !== null && { postShortcode: shortcode }),
-        ...(isMulti && { index: i + 1 }),
-      };
-      try {
-        await browser.runtime.sendMessage(req);
-      } catch (e) {
-        Alert.error(`Download failed: ${String(e)}`);
-      }
-    }
-    if (skipped > 0) {
-      Alert.warn(
-        `${skipped} slide${skipped > 1 ? 's' : ''} could not be resolved and were skipped`,
-      );
+    const req: DownloadRequest = {
+      kind: 'download',
+      mediaURL: downloadURL,
+      accountName,
+      ...(shortcode !== null && { postShortcode: shortcode }),
+    };
+    try {
+      await browser.runtime.sendMessage(req);
+    } catch (e) {
+      Alert.error(`Download failed: ${String(e)}`);
     }
   }
+}
+
+// Find the post container for a given Save SVG. On feed/modal pages this is
+// the enclosing <article>. Permalink (post / reel / video) pages no longer
+// wrap posts in <article>; instead we walk up from the action bar until we
+// find the smallest ancestor that contains a non-action-bar, non-profile
+// image or video — that ancestor is the post wrapper, narrower than <main>
+// (which also contains the related-posts section).
+function findPostContainer(saveSvg: SVGElement): HTMLElement | null {
+  const article = saveSvg.closest<HTMLElement>('article');
+  if (article) return article;
+
+  const actionBar = saveSvg.closest<HTMLElement>('section');
+  const main = saveSvg.closest<HTMLElement>('main[role="main"]');
+  if (!actionBar) return main;
+
+  let cur: HTMLElement | null = actionBar.parentElement;
+  while (cur && cur !== document.body) {
+    if (containsPostMedia(cur, actionBar)) return cur;
+    cur = cur.parentElement;
+  }
+  return main;
+}
+
+function containsPostMedia(scope: HTMLElement, actionBar: HTMLElement): boolean {
+  if (scope.querySelector('video')) return true;
+  const imgs = scope.querySelectorAll<HTMLImageElement>('img');
+  for (const img of imgs) {
+    if (actionBar.contains(img)) continue;
+    const alt = img.getAttribute('alt') ?? '';
+    if (alt === '') continue;
+    if (NON_POST_IMG_ALT_SUFFIXES.some((s) => alt.endsWith(s))) continue;
+    return true;
+  }
+  return false;
+}
+
+function pickActiveRelaySlide<T extends { videoURL: string | null; pk: string | null }>(
+  scope: HTMLElement,
+  slides: T[],
+): T | null {
+  if (slides.length === 0) return null;
+  if (slides.length === 1) return slides[0] ?? null;
+
+  const active = findActiveSlide(scope);
+  if (active && active.index < slides.length) {
+    const slide = slides[active.index];
+    if (slide) return slide;
+  }
+  // Fallback for mixed image+video carousels: pick the first slide that has a
+  // resolvable video URL.
+  return slides.find((s) => s.videoURL !== null) ?? slides[0] ?? null;
+}
+
+function nonBlobOrNull(url: string): string | null {
+  return url && !url.startsWith('blob:') ? url : null;
 }
