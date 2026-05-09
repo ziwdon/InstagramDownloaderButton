@@ -48,12 +48,22 @@ function extractFromScope(s: HTMLElement): { url: string; kind: 'image' | 'video
   return null;
 }
 
-function findActiveCarouselSlide(scope: HTMLElement): HTMLElement | null {
+export function findActiveCarouselSlide(scope: HTMLElement): HTMLElement | null {
   const ul = findPostCarouselUL(scope);
   if (!ul) return null;
   const slides = mediaCarriers(ul);
   if (slides.length === 0) return null;
   return pickActiveSlide(ul, slides);
+}
+
+export function getActiveSlideMatchURL(scope: HTMLElement): string | null {
+  const active = findActiveCarouselSlide(scope) ?? scope;
+  const video = active.querySelector<HTMLVideoElement>('video');
+  if (video?.poster) return video.poster;
+  const img = active.querySelector<HTMLImageElement>(
+    'img[alt^="Photo by "], img[alt^="May be "], img[alt^="Photo shared by "], img[src*="fbcdn"], img[src*="cdninstagram"]',
+  );
+  return img?.src ?? null;
 }
 
 // The post's carousel <ul> is the first one in DOM order whose direct <li>

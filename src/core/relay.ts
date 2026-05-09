@@ -23,6 +23,13 @@ interface RelayWebInfo {
   items?: RelayMediaItem[];
 }
 
+export interface RelaySlide {
+  videoURL: string | null;
+  imageURL: string | null;
+  imageURLs: string[];
+  pk: string | null;
+}
+
 function findValue(obj: unknown, key: string, depth = 0): unknown {
   if (depth > 20 || obj === null || typeof obj !== 'object') return undefined;
   if (Array.isArray(obj)) {
@@ -39,6 +46,27 @@ function findValue(obj: unknown, key: string, depth = 0): unknown {
     }
   }
   return undefined;
+}
+
+function urlAssetId(url: string): string | null {
+  try {
+    const path = new URL(url).pathname;
+    const runs = path.match(/\d{10,}/g) ?? [];
+    if (runs.length === 0) return null;
+    return runs.reduce((a, b) => (b.length > a.length ? b : a));
+  } catch {
+    return null;
+  }
+}
+
+export function relaySlideMatchesURL(slide: RelaySlide, domURL: string | null): boolean {
+  if (!domURL) return false;
+  const target = urlAssetId(domURL);
+  if (!target) return false;
+  for (const url of slide.imageURLs) {
+    if (urlAssetId(url) === target) return true;
+  }
+  return false;
 }
 
 function pickBestImageURL(candidates: ImageCandidate[] | undefined): string | null {
@@ -123,30 +151,28 @@ function findRelayItem(shortcode: string | null): RelayMediaItem | null {
  * Each entry maps to one media slide in order.
  * `videoURL` is null for image slides; `imageURL` is null for video slides.
  */
-export function extractAllSlidesFromRelay(
-  shortcode: string | null,
-): Array<{ videoURL: string | null; imageURL: string | null; pk: string | null }> {
+export function extractAllSlidesFromRelay(shortcode: string | null): RelaySlide[] {
   const item = findRelayItem(shortcode);
   if (!item) return [];
 
+  const toSlide = (m: RelayMediaItem): RelaySlide => {
+    const candidates = m.image_versions2?.candidates ?? [];
+    return {
+      videoURL: m.video_versions?.length ? pickBestURL(m.video_versions) : null,
+      imageURL: pickBestImageURL(candidates),
+      imageURLs: candidates.map((c) => c.url).filter((u): u is string => Boolean(u)),
+      pk: m.pk ?? null,
+    };
+  };
+
   if (item.carousel_media?.length) {
     logger.log('relay carousel hit for shortcode', shortcode);
-    return item.carousel_media.map((slide) => ({
-      videoURL: slide.video_versions?.length ? pickBestURL(slide.video_versions) : null,
-      imageURL: pickBestImageURL(slide.image_versions2?.candidates),
-      pk: slide.pk ?? null,
-    }));
+    return item.carousel_media.map(toSlide);
   }
 
-  const videoURL = item.video_versions?.length ? pickBestURL(item.video_versions) : null;
-  if (videoURL) logger.log('relay cache hit for shortcode', shortcode);
-  return [
-    {
-      videoURL,
-      imageURL: pickBestImageURL(item.image_versions2?.candidates),
-      pk: item.pk ?? null,
-    },
-  ];
+  const single = toSlide(item);
+  if (single.videoURL) logger.log('relay cache hit for shortcode', shortcode);
+  return [single];
 }
 
 /** Async fallback: fetches media info from the Instagram API using the session cookie. */
