@@ -3,9 +3,19 @@ export type Route = 'home' | 'post' | 'reel' | 'story' | 'other';
 export function classify(url: string): Route {
   const u = new URL(url);
   if (u.pathname === '/' || u.pathname === '/accounts/activity/') return 'home';
-  if (u.pathname.startsWith('/p/')) return 'post';
-  if (u.pathname.startsWith('/reel/')) return 'reel';
   if (u.pathname.startsWith('/stories/')) return 'story';
+
+  const segments = u.pathname.split('/').filter(Boolean);
+  if (segments.length === 0) return 'home';
+
+  if (segments[0] === 'p') return 'post';
+  if (segments[0] === 'reel' || segments[0] === 'reels') return 'reel';
+
+  if (segments.length >= 2) {
+    if (segments[1] === 'p') return 'post';
+    if (segments[1] === 'reel') return 'reel';
+  }
+
   return 'other';
 }
 
