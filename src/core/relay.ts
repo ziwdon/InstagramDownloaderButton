@@ -53,30 +53,69 @@ function pickBestURL(versions: VideoVersion[]): string | null {
   return url && !url.startsWith('blob:') ? url : null;
 }
 
-function parseRelayWebInfo(): RelayWebInfo | null {
+function parseAllRelayJSON(): unknown[] {
   const scripts = document.querySelectorAll(RELAY_JSON_SCRIPTS);
+  const out: unknown[] = [];
   for (const script of scripts) {
     try {
-      const data: unknown = JSON.parse(script.textContent ?? '');
-      const webInfo = findValue(data, 'xdt_api__v1__media__shortcode__web_info');
-      if (webInfo !== null && typeof webInfo === 'object' && 'items' in webInfo) {
-        return webInfo as RelayWebInfo;
-      }
+      out.push(JSON.parse(script.textContent ?? ''));
     } catch {
       // skip non-JSON or unrelated scripts
+    }
+  }
+  return out;
+}
+
+// Permalink (post / reel / video) pages embed the post's media under
+// `xdt_api__v1__media__shortcode__web_info.items[*]`.
+function findItemFromShortcodeWebInfo(
+  blobs: unknown[],
+  shortcode: string | null,
+): RelayMediaItem | null {
+  for (const data of blobs) {
+    const webInfo = findValue(data, 'xdt_api__v1__media__shortcode__web_info');
+    if (webInfo === null || typeof webInfo !== 'object' || !('items' in webInfo)) continue;
+    const items = (webInfo as RelayWebInfo).items;
+    if (!items) continue;
+    for (const item of items) {
+      if (shortcode !== null && item.code !== undefined && item.code !== shortcode) continue;
+      return item;
+    }
+  }
+  return null;
+}
+
+// Feed pages (home, profile, channel) embed posts under
+// `xdt_api__v1__feed__timeline__connection.edges[*].node.media`. Match by code
+// since a single connection holds many posts.
+function findItemFromFeedTimeline(
+  blobs: unknown[],
+  shortcode: string | null,
+): RelayMediaItem | null {
+  if (shortcode === null) return null;
+  for (const data of blobs) {
+    const conn = findValue(data, 'xdt_api__v1__feed__timeline__connection');
+    if (!conn || typeof conn !== 'object') continue;
+    const edges = (conn as Record<string, unknown>)['edges'];
+    if (!Array.isArray(edges)) continue;
+    for (const edge of edges) {
+      if (!edge || typeof edge !== 'object') continue;
+      const node = (edge as Record<string, unknown>)['node'];
+      if (!node || typeof node !== 'object') continue;
+      const media = (node as Record<string, unknown>)['media'];
+      if (!media || typeof media !== 'object') continue;
+      const m = media as RelayMediaItem;
+      if (m.code === shortcode) return m;
     }
   }
   return null;
 }
 
 function findRelayItem(shortcode: string | null): RelayMediaItem | null {
-  const webInfo = parseRelayWebInfo();
-  if (!webInfo?.items) return null;
-  for (const item of webInfo.items) {
-    if (shortcode !== null && item.code !== undefined && item.code !== shortcode) continue;
-    return item;
-  }
-  return null;
+  const blobs = parseAllRelayJSON();
+  return (
+    findItemFromShortcodeWebInfo(blobs, shortcode) ?? findItemFromFeedTimeline(blobs, shortcode)
+  );
 }
 
 /**
