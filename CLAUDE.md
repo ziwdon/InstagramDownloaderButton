@@ -95,6 +95,25 @@ references/               # saved HTML snapshots of live Instagram pages (feed, 
 docs/                     # GitHub Pages site (Jekyll); not part of the extension build
 ```
 
+### Cross-checking issues and fixes against page variants
+
+Instagram serves materially different DOM and Relay payloads for each page type. Before declaring an issue understood or a fix complete, walk it against **every** snapshot in `references/`:
+
+- `Instagram_mainfeed.html` — home feed (`/`)
+- `Instagram_channelfeed.html` — channel/explore feed
+- `Instagram_singlepostfeed.html` — single image inline in feed
+- `Instagram_videofeed.html` — single video inline in feed
+- `Instagram_multiplepostfeed.html` — carousel inline in feed
+- `Instagram_singlepost.html` — image **permalink** (`/<user>/p/<shortcode>/`)
+- `Instagram_multiplepost.html` — carousel **permalink** (`/<user>/p/<shortcode>/`)
+- `Instagram_video.html` — reel/video **permalink** (`/<user>/reel/<shortcode>/`)
+
+For every reported defect: confirm whether the same root cause exists on each variant. A bug filed as "single post" often also affects carousel and reel permalinks (same URL family); a "feed" bug usually applies to channel feed too. For every proposed fix: confirm it doesn't regress any variant — including the modal/lightbox path (`/p/<shortcode>/` without a username segment) which is exercised when clicking a post from the home feed.
+
+Permalink URL forms in the wild include `/<user>/p/<shortcode>/`, `/<user>/reel/<shortcode>/`, `/p/<shortcode>/` (modal), `/reel/<shortcode>/` (modal), and `/reels/<shortcode>/` (alias). Path-segment-aware classification is required; leading-prefix matching misses the username-prefixed forms.
+
+Relay payload coverage is **SSR-only**: feed pages embed `xdt_api__v1__feed__timeline__connection` and permalinks embed `xdt_api__v1__media__shortcode__web_info`, but posts fetched after initial render (infinite scroll, tab switches) are **not** appended to the `script[data-sjs]` blobs. Any video resolution path that depends solely on relay data will be flaky for scrolled-in posts; provide a shortcode→media-id derivation fallback so `/api/v1/media/{id}/info/` can still be reached.
+
 ### Selectors (`src/core/selectors.ts`)
 
 All Instagram DOM queries live here. **Instagram rotates its atomic CSS class names** — never hard-code classes like `.M9sTE`. All selectors use semantic anchors (ARIA labels, roles, structural patterns). Each exported constant is a string or `readonly string[]` (joined with `,` at call sites).
