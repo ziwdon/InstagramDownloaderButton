@@ -66,10 +66,7 @@ export class PostDownloader {
     if (section.querySelector(`.${BTN_CLASS}`)) return;
 
     // Walk up from the Save SVG to find its ancestor that is a direct child of
-    // the section. Save's position varies: in feed posts it sits inside a
-    // right-aligned wrapper div (section's second child); on permalink/reel
-    // pages it's a sibling <span> alongside Like/Comment/Share. Either way the
-    // wrapper we want is the one whose parent is the section itself.
+    // the section — the "save cell".
     let saveOuter: Element | null = saveSvg;
     while (saveOuter && saveOuter.parentElement !== section) {
       saveOuter = saveOuter.parentElement;
@@ -78,7 +75,20 @@ export class PostDownloader {
 
     const btn = createDownloadButton(() => void this.onClick(container));
     btn.classList.add(BTN_CLASS);
-    section.insertBefore(btn, saveOuter);
+
+    // The action-bar section is a 2-column CSS grid (`grid-template-columns:
+    // 1fr 1fr`) on every current Instagram layout: column 1 holds the actions
+    // wrapper (Like/Comment/Share), column 2 holds Save. Inserting a third
+    // direct child auto-places it in column 2 row 1 and bumps Save to row 2.
+    // To stay on one line we append into the actions wrapper instead, keeping
+    // the grid at two children. If no such wrapper exists (legacy flat
+    // layouts), fall back to placing the button before Save in the section.
+    const actionsWrapper = findActionsWrapper(section, saveOuter);
+    if (actionsWrapper) {
+      actionsWrapper.appendChild(btn);
+    } else {
+      section.insertBefore(btn, saveOuter);
+    }
   }
 
   async onClick(container: HTMLElement): Promise<void> {
@@ -163,6 +173,21 @@ function containsPostMedia(scope: HTMLElement, actionBar: HTMLElement): boolean 
     return true;
   }
   return false;
+}
+
+// The "actions wrapper" is the direct section child that holds the row of
+// Like/Comment/Share icons (i.e., everything in the action bar except Save).
+// We identify it by requiring BOTH a Like/Unlike SVG AND a Share SVG inside
+// the same child — that distinguishes a single grouped wrapper from legacy
+// flat layouts where each action is its own direct section child.
+function findActionsWrapper(section: HTMLElement, saveOuter: Element): HTMLElement | null {
+  for (const child of Array.from(section.children)) {
+    if (child === saveOuter) continue;
+    const hasLike = child.querySelector('svg[aria-label="Like"], svg[aria-label="Unlike"]');
+    const hasShare = child.querySelector('svg[aria-label="Share"]');
+    if (hasLike && hasShare) return child as HTMLElement;
+  }
+  return null;
 }
 
 function pickActiveRelaySlide<T extends { videoURL: string | null; pk: string | null }>(
