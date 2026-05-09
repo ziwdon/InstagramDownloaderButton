@@ -36,6 +36,10 @@ Releases are automatic. To cut a release:
 
 The `publish.yml` workflow detects the version bump (compares `package.json` against the latest `v*` tag), creates the tag, builds the Firefox extension, signs it via `web-ext sign`, creates a GitHub Release, and deploys `updates.json` to GitHub Pages. No manual tagging needed.
 
+## CI
+
+Every push and PR runs lint → typecheck → build → zip. Build artifacts (`.output/**/*.zip`) are uploaded as a GitHub Actions artifact named `extension-zips`. There is no separate test job — see `ci.yml`.
+
 ## Architecture
 
 ### Execution contexts
@@ -122,7 +126,9 @@ Resolution order in `PostDownloader.onClick()`:
 
 The API fetch runs in the content script (not the background), so session cookies are available automatically.
 
-**Known limitation — feed-scoped relay key:** the extractor only scans `xdt_api__v1__media__shortcode__web_info`, which is present on permalink (post / reel / video) pages but **absent on feed pages** (home, profile feed, channel feed). On feed pages the same data is keyed under `xdt_api__v1__feed__timeline__connection` with a different shape: `edges[*].node.media.{video_versions, image_versions2, carousel_media, pk, code}`. As a result, video downloads from the feed currently fail with "Could not resolve video URL …" because `extractAllSlidesFromRelay` returns `[]` and the API fallback never fires (no `pk`). A fix would add a second extraction path that walks `xdt_api__v1__feed__timeline__connection` edges, matches by `code === shortcode`, and projects to the same per-slide return shape.
+**Two relay extraction paths:** `findRelayItem()` (internal) tries both keys in order:
+1. `xdt_api__v1__media__shortcode__web_info` — permalink pages (post / reel / video).
+2. `xdt_api__v1__feed__timeline__connection` — feed pages (home, profile, channel). Walks `edges[*].node.media` and matches by `code === shortcode`.
 
 ### Background constraints (MV3 service worker)
 
