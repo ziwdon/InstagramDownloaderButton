@@ -7,6 +7,7 @@ import {
   findActiveSlide,
 } from '../core/extractors';
 import { extractAllSlidesFromRelay, fetchVideoURLFromAPI } from '../core/relay';
+import { shortcodeToMediaId } from '../core/shortcode';
 import type { DownloadRequest } from '../core/messages';
 import { Alert } from './ui/Alert';
 import { createDownloadButton } from './ui/DownloadButton';
@@ -111,9 +112,18 @@ export class PostDownloader {
       const relaySlides = extractAllSlidesFromRelay(shortcode);
       const slide = pickActiveRelaySlide(container, relaySlides);
       let videoURL = slide?.videoURL ?? null;
+
       if (!videoURL && slide?.pk) {
         videoURL = await fetchVideoURLFromAPI(slide.pk);
       }
+
+      if (!videoURL && shortcode !== null) {
+        const derivedId = shortcodeToMediaId(shortcode);
+        if (derivedId !== null) {
+          videoURL = await fetchVideoURLFromAPI(derivedId);
+        }
+      }
+
       downloadURL = videoURL ?? nonBlobOrNull(media.url);
     }
 
