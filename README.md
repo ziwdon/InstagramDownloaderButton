@@ -1,63 +1,56 @@
+<p align="center">
+  <img src="public/icons/icon-128.png" alt="Instagram Downloader Button icon" width="96" height="96" />
+</p>
+
 # Instagram Downloader Button
 
-A browser extension that adds a one-click download button to individual Instagram posts. Supports Chrome and Firefox via Manifest V3.
+A browser extension that adds a one-click download button to individual Instagram posts.
+
+Supports Chrome and Firefox via Manifest V3.
 
 The button appears next to the bookmark/save icon on feed posts, post modals, and reels. Clicking it downloads the image or video directly to your device.
 
 ## Features
 
-- Download images and videos from feed posts, modals, and reels
-- Carousel support — downloads every slide in one click
-- Automatic video resolution with API fallback
-- Toast notifications on error
+- Works on feed, modal, post permalink, and reel permalink pages
+- Supports both image and video posts
+- Carousel-aware: downloads the currently visible slide
+- MV3-compatible architecture for Chrome and Firefox
 
 ## Installation
 
 ### Firefox
 
-Download the latest signed `.xpi` from the [Releases page](https://github.com/ziwdon/InstagramDownloaderButton/releases/latest) and open it in Firefox (or drag it onto `about:addons`). The extension updates automatically when new versions are released.
+Download the latest signed `.xpi` from the [Releases page](https://github.com/ziwdon/InstagramDownloaderButton/releases/latest) and open it in Firefox (or drag it onto `about:addons`).
+The extension updates automatically when new versions are released.
 
 ### Chrome
 
 The extension is not published on the Chrome Web Store and must be loaded manually.
 
-1. Clone the repo and build:
+1. Build the extension:
    ```bash
    npm install
    npm run build
    ```
-2. Open `chrome://extensions` and enable **Developer mode**
-3. Click **Load unpacked** and select `.output/chrome-mv3/`
-
-Chrome may show a startup warning about developer mode extensions — dismiss it.
+2. Open `chrome://extensions`
+3. Enable **Developer mode**
+4. Click **Load unpacked**
+5. Select `.output/chrome-mv3/`
 
 ## Usage
 
 1. Go to [instagram.com](https://www.instagram.com) and open any post (feed, modal, or reel)
-2. A download button appears to the right of the bookmark icon in the action bar
-3. Click it — images download immediately; videos resolve automatically
-4. Carousel posts download all slides at once
+3. Click the extension download button that appears to the right of the bookmark post icon
+4. The current image/video is downloaded to your default Downloads folder
 
-Files are saved to your default download directory, named by account and post shortcode.
-
-## Development
-
-```bash
-npm install
-
-npm run dev           # wxt dev server — Chrome, with HMR
-npm run dev:firefox   # wxt dev server — Firefox
-
-npm run typecheck     # tsc --noEmit
-npm run lint          # eslint + prettier check
-npm run lint:fix      # eslint --fix + prettier --write
-```
-
-## Releasing a new version
+## Releasing and/or updating to a new version
 
 Releases are automatic. When a commit is pushed to `master` with a bumped version in `package.json`, the GitHub Actions workflow creates the tag, builds the Firefox extension, signs it as unlisted via `web-ext sign`, creates a GitHub Release with the signed XPI, and deploys `updates.json` to GitHub Pages for automatic updates.
 
-### One-time setup
+### One-time repository setup
+
+If you want to clone or fork this repository and create an automated release workflow, follow the steps below.
 
 #### AMO API credentials
 
