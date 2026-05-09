@@ -36,6 +36,8 @@ Releases are automatic. To cut a release:
 
 The `publish.yml` workflow detects the version bump (compares `package.json` against the latest `v*` tag), creates the tag, builds the Firefox extension, signs it via `web-ext sign`, creates a GitHub Release, and deploys `updates.json` to GitHub Pages. No manual tagging needed.
 
+**One-time repo setup (for forks):** Add `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` as repository secrets (from addons.mozilla.org → API key page). Enable GitHub Pages with source set to "GitHub Actions" and allow the `master` branch in the `github-pages` environment's deployment rules.
+
 ## CI
 
 Every push and PR runs lint → typecheck → build → zip. Build artifacts (`.output/**/*.zip`) are uploaded as a GitHub Actions artifact named `extension-zips`. There is no separate test job — see `ci.yml`.
@@ -76,6 +78,7 @@ src/
     selectors.ts          # all Instagram DOM selectors — most fragile file
     extractors.ts         # pulls mediaURL / author / shortcode from a post container; locates active carousel slide
     relay.ts              # video URL extraction: relay cache reader + API fallback
+    shortcode.ts          # shortcodeToMediaId() — base-64 decode of shortcode → numeric media ID
     logger.ts             # dev-only console wrapper (no-op in production)
   content/
     AddonManager.ts       # wires UrlRouter → PostDownloader
@@ -92,7 +95,7 @@ src/
 
 public/icons/             # extension icons (referenced in wxt.config.ts manifest)
 references/               # saved HTML snapshots of live Instagram pages (feed, modal, single post, video) — use for offline selector validation
-docs/                     # GitHub Pages site (Jekyll); not part of the extension build
+                          # also contains .har captures (video_download_error.har, video_download_success.har) for debugging video URL resolution
 ```
 
 ### Cross-checking issues and fixes against page variants
