@@ -1,83 +1,161 @@
+<p align="center">
+  <img src="public/icons/icon-128.png" alt="Instagram Downloader Button icon" width="96" height="96" />
+</p>
+
 # Instagram Downloader Button
 
-A browser extension that adds a one-click download button to individual Instagram posts. Supports Chrome and Firefox via Manifest V3.
+One-click Instagram post downloader for Chrome and Firefox (Manifest V3).
 
-The button appears next to the bookmark/save icon on feed posts, post modals, and reels. Clicking it downloads the image or video directly to your device.
+The extension injects a download button next to Instagram's Save control and downloads the currently visible media (image or video) from that post.
 
-## Features
+## Highlights
 
-- Download images and videos from feed posts, modals, and reels
-- Carousel support — downloads every slide in one click
-- Automatic video resolution with API fallback
-- Toast notifications on error
+- Works on feed, modal, post permalink, and reel permalink pages
+- Supports both image and video posts
+- Carousel-aware: downloads the currently visible slide
+- Video URL resolution with relay cache + authenticated API fallback
+- MV3-compatible architecture for Chrome and Firefox
+
+## What it does not include
+
+- Bulk downloader
+- Story downloader
+- Keyboard shortcuts / options UI
 
 ## Installation
 
-### Firefox
+### Firefox (signed package)
 
-Download the latest signed `.xpi` from the [Releases page](https://github.com/ziwdon/InstagramDownloaderButton/releases/latest) and open it in Firefox (or drag it onto `about:addons`). The extension updates automatically when new versions are released.
+Download the latest `.xpi` from [Releases](https://github.com/ziwdon/InstagramDownloaderButton/releases/latest), then open it in Firefox (or drag it onto `about:addons`).
 
-### Chrome
+Automatic updates are provided via `updates.json` published from this repository.
 
-The extension is not published on the Chrome Web Store and must be loaded manually.
+### Chrome (unpacked)
 
-1. Clone the repo and build:
+This project is currently distributed for Chrome as an unpacked extension.
+
+1. Build the extension:
    ```bash
    npm install
    npm run build
    ```
-2. Open `chrome://extensions` and enable **Developer mode**
-3. Click **Load unpacked** and select `.output/chrome-mv3/`
-
-Chrome may show a startup warning about developer mode extensions — dismiss it.
+2. Open `chrome://extensions`
+3. Enable **Developer mode**
+4. Click **Load unpacked**
+5. Select `.output/chrome-mv3/`
 
 ## Usage
 
-1. Go to [instagram.com](https://www.instagram.com) and open any post (feed, modal, or reel)
-2. A download button appears to the right of the bookmark icon in the action bar
-3. Click it — images download immediately; videos resolve automatically
-4. Carousel posts download all slides at once
+1. Open any Instagram post page (feed card, modal, `/p/...`, or `/reel/...`)
+2. Click the extension download button next to Save
+3. The current image/video is downloaded to your default Downloads folder
 
-Files are saved to your default download directory, named by account and post shortcode.
+Filename format:
+
+```text
+{account}_{shortcode-or-timestamp}[_{index}].{ext}
+```
 
 ## Development
 
+### Prerequisites
+
+- Node.js 20+
+- npm
+
+### Local setup
+
 ```bash
 npm install
-
-npm run dev           # wxt dev server — Chrome, with HMR
-npm run dev:firefox   # wxt dev server — Firefox
-
-npm run typecheck     # tsc --noEmit
-npm run lint          # eslint + prettier check
-npm run lint:fix      # eslint --fix + prettier --write
+npx wxt prepare
 ```
 
-## Releasing a new version
+### Useful commands
 
-Releases are automatic. When a commit is pushed to `master` with a bumped version in `package.json`, the GitHub Actions workflow creates the tag, builds the Firefox extension, signs it as unlisted via `web-ext sign`, creates a GitHub Release with the signed XPI, and deploys `updates.json` to GitHub Pages for automatic updates.
+```bash
+npm run dev           # Chrome dev mode (HMR)
+npm run dev:firefox   # Firefox dev mode
+npm run build         # Build Chrome + Firefox outputs
+npm run zip           # Build store-ready zip artifacts
+npm run lint          # ESLint + Prettier check
+npm run lint:fix      # Auto-fix lint/format issues
+npm run typecheck     # TypeScript strict check
+npm run amo-lint      # Validate Firefox zip(s) with addons-linter
+```
 
-### One-time setup
+Build outputs:
 
-#### AMO API credentials
+- `.output/chrome-mv3/`
+- `.output/firefox-mv3/`
+- `.output/*-zip/`
 
-Go to **https://addons.mozilla.org/en-US/developers/addon/api/key/** and generate API credentials. Add them as repository secrets (**Settings → Secrets and variables → Actions**):
+## How it works
 
-| Secret | Value |
-|---|---|
-| `AMO_JWT_ISSUER` | JWT issuer (starts with `user:...`) |
-| `AMO_JWT_SECRET` | JWT secret |
+| Context | Responsibility |
+| --- | --- |
+| `entrypoints/main-world.content.ts` | Patches SPA navigation (`pushState` / `replaceState`) and emits `locationchange` |
+| `entrypoints/content.ts` | Boots `AddonManager` and route-driven feature activation |
+| `entrypoints/background.ts` | Receives download messages and calls `browser.downloads.download()` |
 
-#### GitHub Pages
+At runtime:
 
-Go to **Settings → Pages** and set **Source** to **GitHub Actions**. A `github-pages` environment is usually created automatically — check under **Settings → Environments**. In the environment's deployment rules, add the `master` branch so that pushes to `master` are allowed to deploy.
+1. Route changes are detected on Instagram SPA navigation.
+2. The content script scans for Save icons and injects one download button per post container.
+3. On click, media is extracted from the active slide (or single post scope).
+4. For video posts, relay JSON is used first; then API fallback (`/api/v1/media/{id}/info/`) is attempted.
+5. The background service worker performs the actual download.
 
-### Publishing
+## CI
 
-1. Bump `version` in both `wxt.config.ts` and `package.json`.
-2. Commit and push (or open a PR and merge to `master`). The release is created automatically.
-3. The workflow detects the version bump, creates the tag, and runs: build → sign → GitHub Release → deploy `updates.json`.
-4. Installed extensions update silently via `updates.json`.
+On every push and pull request, GitHub Actions runs:
+
+1. `npm ci`
+2. `npx wxt prepare`
+3. `npm run lint`
+4. `npm run typecheck`
+5. `npm run build`
+6. `npm run zip`
+
+Zip artifacts are uploaded as `extension-zips`.
+
+## Release process
+
+Releases are automated from `master`.
+
+To publish a new version:
+
+1. Bump `version` in both `package.json` and `wxt.config.ts`
+2. Merge/push to `master`
+
+`publish.yml` then:
+
+- detects whether the version is newer than the latest `v*` tag
+- creates and pushes the corresponding `vX.Y.Z` tag (if needed)
+- builds + signs the Firefox MV3 package
+- creates a GitHub Release with the signed `.xpi`
+- deploys `updates.json` to GitHub Pages
+
+Required repository secrets:
+
+- `AMO_JWT_ISSUER`
+- `AMO_JWT_SECRET`
+
+## Manual verification
+
+There is no automated test suite yet. Validate changes manually on:
+
+- home feed
+- channel/explore feed
+- single image post
+- carousel post
+- reel/video post
+- modal post opened from feed
+
+Reference snapshots for selector checks are stored in `references/`.
+
+## License
+
+LGPL-3.0
 
 ## Credits
 
