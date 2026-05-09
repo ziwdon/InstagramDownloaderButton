@@ -5,8 +5,15 @@ import {
   extractCurrentMediaURL,
   extractShortcode,
   findActiveSlide,
+  getActiveSlideMatchURL,
 } from '../core/extractors';
-import { extractAllSlidesFromRelay, fetchVideoURLFromAPI } from '../core/relay';
+import {
+  extractAllSlidesFromRelay,
+  fetchVideoURLFromAPI,
+  relaySlideMatchesURL,
+  type RelaySlide,
+} from '../core/relay';
+import { shortcodeToMediaId } from '../core/shortcode';
 import type { DownloadRequest } from '../core/messages';
 import { Alert } from './ui/Alert';
 import { createDownloadButton } from './ui/DownloadButton';
@@ -111,9 +118,18 @@ export class PostDownloader {
       const relaySlides = extractAllSlidesFromRelay(shortcode);
       const slide = pickActiveRelaySlide(container, relaySlides);
       let videoURL = slide?.videoURL ?? null;
+
       if (!videoURL && slide?.pk) {
         videoURL = await fetchVideoURLFromAPI(slide.pk);
       }
+
+      if (!videoURL && shortcode !== null) {
+        const derivedId = shortcodeToMediaId(shortcode);
+        if (derivedId !== null) {
+          videoURL = await fetchVideoURLFromAPI(derivedId);
+        }
+      }
+
       downloadURL = videoURL ?? nonBlobOrNull(media.url);
     }
 
@@ -190,20 +206,22 @@ function findActionsWrapper(section: HTMLElement, saveOuter: Element): HTMLEleme
   return null;
 }
 
-function pickActiveRelaySlide<T extends { videoURL: string | null; pk: string | null }>(
-  scope: HTMLElement,
-  slides: T[],
-): T | null {
+function pickActiveRelaySlide(scope: HTMLElement, slides: RelaySlide[]): RelaySlide | null {
   if (slides.length === 0) return null;
   if (slides.length === 1) return slides[0] ?? null;
+
+  const matchURL = getActiveSlideMatchURL(scope);
+  if (matchURL) {
+    const matched = slides.find((slide) => relaySlideMatchesURL(slide, matchURL));
+    if (matched) return matched;
+  }
 
   const active = findActiveSlide(scope);
   if (active && active.index < slides.length) {
     const slide = slides[active.index];
     if (slide) return slide;
   }
-  // Fallback for mixed image+video carousels: pick the first slide that has a
-  // resolvable video URL.
+
   return slides.find((s) => s.videoURL !== null) ?? slides[0] ?? null;
 }
 

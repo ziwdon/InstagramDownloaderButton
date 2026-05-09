@@ -48,12 +48,22 @@ function extractFromScope(s: HTMLElement): { url: string; kind: 'image' | 'video
   return null;
 }
 
-function findActiveCarouselSlide(scope: HTMLElement): HTMLElement | null {
+export function findActiveCarouselSlide(scope: HTMLElement): HTMLElement | null {
   const ul = findPostCarouselUL(scope);
   if (!ul) return null;
   const slides = mediaCarriers(ul);
   if (slides.length === 0) return null;
   return pickActiveSlide(ul, slides);
+}
+
+export function getActiveSlideMatchURL(scope: HTMLElement): string | null {
+  const active = findActiveCarouselSlide(scope) ?? scope;
+  const video = active.querySelector<HTMLVideoElement>('video');
+  if (video?.poster) return video.poster;
+  const img = active.querySelector<HTMLImageElement>(
+    'img[alt^="Photo by "], img[alt^="May be "], img[alt^="Photo shared by "], img[src*="fbcdn"], img[src*="cdninstagram"]',
+  );
+  return img?.src ?? null;
 }
 
 // The post's carousel <ul> is the first one in DOM order whose direct <li>
@@ -74,19 +84,35 @@ function mediaCarriers(ul: HTMLUListElement): HTMLLIElement[] {
   return result;
 }
 
+function getCarouselViewportRect(ul: HTMLUListElement): DOMRect {
+  let el: HTMLElement | null = ul.parentElement;
+  while (el && el !== document.body) {
+    const cs = getComputedStyle(el);
+    const overflowX = cs.overflowX;
+    if (overflowX === 'hidden' || overflowX === 'clip' || overflowX === 'auto') {
+      return el.getBoundingClientRect();
+    }
+    el = el.parentElement;
+  }
+  return (ul.parentElement ?? ul).getBoundingClientRect();
+}
+
 // The visually active slide is the one with the largest horizontal overlap
 // with the carousel viewport. Works for both the legacy tabindex-based
 // carousel and the newer one where every real slide has tabindex="-1" and
 // position is driven by transform translateX().
 function pickActiveSlide(ul: HTMLUListElement, slides: HTMLLIElement[]): HTMLLIElement {
   if (slides.length === 1) return slides[0]!;
-  const ulRect = ul.getBoundingClientRect();
+  const viewport = getCarouselViewportRect(ul);
   let best: { li: HTMLLIElement; overlap: number } | null = null;
   for (const li of slides) {
     const r = li.getBoundingClientRect();
-    const overlap = Math.max(0, Math.min(r.right, ulRect.right) - Math.max(r.left, ulRect.left));
+    const overlap = Math.max(
+      0,
+      Math.min(r.right, viewport.right) - Math.max(r.left, viewport.left),
+    );
     if (overlap <= 0) continue;
-    if (!best || overlap > best.overlap) best = { li, overlap };
+    if (!best || overlap >= best.overlap) best = { li, overlap };
   }
   return best?.li ?? slides[0]!;
 }
