@@ -110,6 +110,7 @@ Instagram serves materially different DOM and Relay payloads for each page type.
 - `Instagram_singlepost.html` — image **permalink** (`/<user>/p/<shortcode>/`)
 - `Instagram_multiplepost.html` — carousel **permalink** (`/<user>/p/<shortcode>/`)
 - `Instagram_video.html` — reel/video **permalink** (`/<user>/reel/<shortcode>/`)
+- `Instagram_multiplepost_2.html` — carousel permalink served with `?hl=es` (Spanish locale; aria-label/title text is translated)
 
 For every reported defect: confirm whether the same root cause exists on each variant. A bug filed as "single post" often also affects carousel and reel permalinks (same URL family); a "feed" bug usually applies to channel feed too. For every proposed fix: confirm it doesn't regress any variant — including the modal/lightbox path (`/p/<shortcode>/` without a username segment) which is exercised when clicking a post from the home feed.
 
@@ -121,8 +122,11 @@ Relay payload coverage is **SSR-only**: feed pages embed `xdt_api__v1__feed__tim
 
 All Instagram DOM queries live here. **Instagram rotates its atomic CSS class names** — never hard-code classes like `.M9sTE`. All selectors use semantic anchors (ARIA labels, roles, structural patterns). Each exported constant is a string or `readonly string[]` (joined with `,` at call sites).
 
+**Locale stability:** Instagram localizes `aria-label` and `<title>` text on every action-bar SVG when the URL carries `?hl=<locale>` ("Save" → "Guardar" in Spanish, etc.), but the SVG `polygon`/`path` geometry is identical across all locales. `SAVE_SVG`, `LIKE_SVG`, and `SHARE_SVG` therefore each OR a geometry-based selector (`svg:has(polygon[points="..."])` / `svg:has(path[d^="..."])`) with the English aria-label selector. Either anchor is sufficient — both must break for the action bar to become undiscoverable. Image extraction is unaffected by `?hl=` because Instagram's auto-generated post `alt` text (`"Photo by …"`, `"May be …"`) stays English regardless of the locale parameter.
+
 Key selectors:
-- `SAVE_SVG` — `svg[aria-label="Save"], svg[aria-label="Remove"]` — primary anchor for both button insertion and post-container discovery (one per post)
+- `SAVE_SVG` — `svg[aria-label="Save"|"Remove"]` OR the unfilled-bookmark polygon — primary anchor for both button insertion and post-container discovery (one per post)
+- `LIKE_SVG`, `SHARE_SVG` — same aria-label-OR-geometry pattern; used by `findActionsWrapper` in `PostDownloader.ts` to identify the actions wrapper child of the action-bar section
 - `ACTION_BAR` — section containing Like/Save SVGs — the action-bar parent for inserting the button
 - `POST_IMG` — images by alt-text prefix (`"Photo by "`, `"May be "`, `"Photo shared by "`), `_aagu` wrapper, or `fbcdn` src; final fallback excludes profile/avatar/highlight thumbs by alt suffix
 - `POST_VIDEO` — `video` — detects video posts; triggers relay/API resolution path
