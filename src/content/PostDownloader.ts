@@ -1,5 +1,5 @@
 import browser from 'webextension-polyfill';
-import { ACTION_BAR, SAVE_SVG } from '../core/selectors';
+import { ACTION_BAR, LIKE_SVG, SAVE_SVG, SHARE_SVG } from '../core/selectors';
 import {
   extractAuthor,
   extractCurrentMediaURL,
@@ -199,8 +199,8 @@ function containsPostMedia(scope: HTMLElement, actionBar: HTMLElement): boolean 
 function findActionsWrapper(section: HTMLElement, saveOuter: Element): HTMLElement | null {
   for (const child of Array.from(section.children)) {
     if (child === saveOuter) continue;
-    const hasLike = child.querySelector('svg[aria-label="Like"], svg[aria-label="Unlike"]');
-    const hasShare = child.querySelector('svg[aria-label="Share"]');
+    const hasLike = child.querySelector(LIKE_SVG);
+    const hasShare = child.querySelector(SHARE_SVG);
     if (hasLike && hasShare) return child as HTMLElement;
   }
   return null;
