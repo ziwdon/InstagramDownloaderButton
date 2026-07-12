@@ -112,7 +112,7 @@ function pickActiveSlide(ul: HTMLUListElement, slides: HTMLLIElement[]): HTMLLIE
       Math.min(r.right, viewport.right) - Math.max(r.left, viewport.left),
     );
     if (overlap <= 0) continue;
-    if (!best || overlap >= best.overlap) best = { li, overlap };
+    if (!best || overlap > best.overlap) best = { li, overlap };
   }
   return best?.li ?? slides[0]!;
 }

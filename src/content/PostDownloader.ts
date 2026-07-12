@@ -15,6 +15,7 @@ import {
 } from '../core/relay';
 import { shortcodeToMediaId } from '../core/shortcode';
 import { VIDEO_DOWNLOADS_ENABLED } from '../core/config';
+import { classify } from './UrlRouter';
 import type { DownloadRequest } from '../core/messages';
 import { Alert } from './ui/Alert';
 import { createDownloadButton } from './ui/DownloadButton';
@@ -106,7 +107,7 @@ export class PostDownloader {
       return;
     }
 
-    const shortcode = extractShortcode(container);
+    const shortcode = extractShortcode(container) ?? extractShortcodeFromURL();
     const accountName = extractAuthor(container);
 
     let downloadURL: string | null = null;
@@ -231,4 +232,24 @@ function pickActiveRelaySlide(scope: HTMLElement, slides: RelaySlide[]): RelaySl
 
 function nonBlobOrNull(url: string): string | null {
   return url && !url.startsWith('blob:') ? url : null;
+}
+
+// Fallback for when extractShortcode() finds no permalink anchor in the
+// container (e.g. layout variance). On single-post routes the shortcode is
+// already present in the URL itself. Mirrors the segment logic in
+// UrlRouter.classify() so this only resolves on post/reel routes — never on
+// home, where the URL's shortcode (if any) wouldn't identify which feed post
+// was actually clicked.
+function extractShortcodeFromURL(): string | null {
+  const route = classify(location.href);
+  if (route !== 'post' && route !== 'reel') return null;
+
+  const segments = location.pathname.split('/').filter(Boolean);
+  if (segments[0] === 'p' || segments[0] === 'reel' || segments[0] === 'reels') {
+    return segments[1] ?? null;
+  }
+  if (segments.length >= 2 && (segments[1] === 'p' || segments[1] === 'reel')) {
+    return segments[2] ?? null;
+  }
+  return null;
 }
