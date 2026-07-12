@@ -19,6 +19,8 @@ npm run dev:firefox      # wxt dev server (Firefox)
 npm run build            # build Chrome MV3 + Firefox MV3 → .output/
 npm run zip              # build + store-ready zips
 npm run typecheck        # tsc --noEmit
+npm run test             # vitest run (unit + DOM-selector suite)
+npm run test:watch       # vitest (watch mode)
 npm run lint             # eslint + prettier check
 npm run lint:fix         # eslint --fix + prettier --write
 npm run amo-lint         # addons-linter on .output/firefox-mv3-zip/*.zip
@@ -26,7 +28,36 @@ npm run amo-lint         # addons-linter on .output/firefox-mv3-zip/*.zip
 
 Build outputs: `.output/chrome-mv3/` and `.output/firefox-mv3/` (unpacked), `.output/*-zip/` (store-ready). No `dist/` or `zip/` directories.
 
-There is no test suite — the project relies on manual smoke testing against live Instagram pages.
+### Testing
+
+A `vitest` suite covers the extension's pure logic and DOM selectors; live-Instagram
+manual smoke testing is still needed for end-to-end download behavior (network,
+`browser.downloads`, Instagram's live DOM). Config: `vitest.config.ts` (standalone;
+`happy-dom` environment). Tests live in `tests/` (see `tests/README.md`). Three tiers:
+
+1. **Pure logic** (`tests/unit/`): `shortcodeToMediaId()`, `buildFilename()`
+   (`src/background/filename.ts` — extracted from `download.ts` so it is testable
+   without the `webextension-polyfill` import, which throws outside an extension),
+   `classify()` (URL routing), and the `relay.ts` traversal fed with trimmed fixture
+   JSON.
+2. **DOM selectors** (`tests/dom/`): loads per-variant HTML fixtures and asserts
+   `SAVE_SVG` count per post, action-bar resolution (via the `closest('section')` path
+   production uses), `POST_IMG` finding post media but never avatars, and locale
+   stability on the Spanish snapshot.
+3. CI runs `npm test` between typecheck and build (`ci.yml`).
+
+**Fixtures** (`tests/fixtures/`): `references/*.html` is gitignored and multi-MB, so it
+is NOT loaded directly. `scripts/extract-fixtures.mjs` (run manually against a local
+`references/` dir) derives small committed fixtures: `fixtures/dom/*.html` (snapshots
+with `<script>/<style>/<link>` stripped — irrelevant to selector queries, ~5-10x
+smaller) and `fixtures/relay/*.json` (trimmed Relay payloads). Regenerate with
+`node scripts/extract-fixtures.mjs /path/to/references`.
+
+**`:has()` caveat:** `happy-dom` (v20) supports single-level `:has()` but NOT nested
+`:has()`, so the `ACTION_BAR` constant (`section:has(svg:has(...))`) cannot be tested
+as a literal selector — that assertion is a documented `it.skip`. `SAVE_SVG`/`LIKE_SVG`
+(single-level `:has()`) test fine, and action-bar resolution is covered via
+`closest('section')`, which is production's primary path anyway.
 
 ## Releasing
 
@@ -40,7 +71,7 @@ The `publish.yml` workflow detects the version bump (compares `package.json` aga
 
 ## CI
 
-Every push and PR runs lint → typecheck → build → zip. Build artifacts (`.output/**/*.zip`) are uploaded as a GitHub Actions artifact named `extension-zips`. There is no separate test job — see `ci.yml`.
+Every push and PR runs lint → typecheck → test → build → zip. Build artifacts (`.output/**/*.zip`) are uploaded as a GitHub Actions artifact named `extension-zips`. See `ci.yml`.
 
 ## Architecture
 

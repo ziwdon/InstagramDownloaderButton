@@ -5,6 +5,7 @@ docs/
 assets/
 references/
 public/
+tests/fixtures/
 *.md
 *.yml
 *.yaml
