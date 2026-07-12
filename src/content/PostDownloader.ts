@@ -14,6 +14,7 @@ import {
   type RelaySlide,
 } from '../core/relay';
 import { shortcodeToMediaId } from '../core/shortcode';
+import { VIDEO_DOWNLOADS_ENABLED } from '../core/config';
 import type { DownloadRequest } from '../core/messages';
 import { Alert } from './ui/Alert';
 import { createDownloadButton } from './ui/DownloadButton';
@@ -112,6 +113,9 @@ export class PostDownloader {
 
     if (media.kind === 'image') {
       downloadURL = nonBlobOrNull(media.url);
+    } else if (!VIDEO_DOWNLOADS_ENABLED) {
+      Alert.warn('Video downloads are currently disabled');
+      return;
     } else {
       // Video: prefer relay/API URL — the DOM <video> often has an HLS blob or
       // a short-lived URL that fails to download.
