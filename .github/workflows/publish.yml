@@ -58,14 +58,6 @@ jobs:
           REPO="${GITHUB_REPOSITORY#*/}"
           VERSION="${{ steps.version_check.outputs.version }}"
           TAG="v${VERSION}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git ls-remote --tags origin "${TAG}" | grep -q "${TAG}"; then
-            echo "Tag ${TAG} already exists, skipping tag creation"
-          else
-            git tag "${TAG}"
-            git push origin "${TAG}"
-          fi
           echo "updates_url=https://${OWNER}.github.io/${REPO}/updates.json" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
@@ -118,6 +110,25 @@ jobs:
           VERSION: ${{ steps.meta.outputs.version }}
           UPDATE_LINK: https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}/${{ steps.xpi.outputs.filename }}
           UPDATE_HASH: ${{ steps.xpi.outputs.hash }}
+
+      # Tag creation/push is deliberately deferred until after signing (and asset/
+      # updates.json prep) succeed, so a failure earlier in the job never leaves a
+      # tag behind. If a run fails AFTER this step (Release creation, Pages deploy,
+      # etc.), delete the remote tag before retrying — e.g.
+      # `git push origin :refs/tags/${TAG}` — otherwise the next run's version
+      # check will see the tag and silently skip the release.
+      - name: Push release tag
+        if: steps.version_check.outputs.should_release == 'true'
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --tags origin "${TAG}" | grep -q "${TAG}"; then
+            echo "Tag ${TAG} already exists, skipping tag creation"
+          else
+            git tag "${TAG}"
+            git push origin "${TAG}"
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
