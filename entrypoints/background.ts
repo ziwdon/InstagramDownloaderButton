@@ -1,9 +1,13 @@
 import browser from 'webextension-polyfill';
-import { handleDownload } from '../src/background/download';
+import { handleDownload, registerDownloadTracking } from '../src/background/download';
 import { isDownloadRequest } from '../src/core/messages';
 import { logger } from '../src/core/logger';
 
 export default defineBackground(() => {
+  // Registered synchronously on every service-worker start (including
+  // wake-from-suspend) so no `downloads.onChanged` events are missed.
+  registerDownloadTracking();
+
   browser.runtime.onMessage.addListener((msg: unknown) => {
     if (!isDownloadRequest(msg)) {
       logger.warn('Ignoring malformed runtime message', msg);
