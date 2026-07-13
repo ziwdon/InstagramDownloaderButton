@@ -114,6 +114,17 @@ export class PostDownloader {
 
     if (media.kind === 'image') {
       downloadURL = nonBlobOrNull(media.url);
+
+      if (!downloadURL) {
+        // DOM srcset came back empty/blob/expired — recover via the same
+        // relay resolution the video branch uses below, taking the active
+        // slide's best image_versions2 candidate (relay.ts already returns
+        // the widest one as `imageURL`). The DOM path above remains primary;
+        // this only engages when it produced nothing usable.
+        const relaySlides = extractAllSlidesFromRelay(shortcode);
+        const slide = pickActiveRelaySlide(container, relaySlides);
+        downloadURL = slide?.imageURL ?? null;
+      }
     } else if (!VIDEO_DOWNLOADS_ENABLED) {
       Alert.warn('Video downloads are currently disabled');
       return;
