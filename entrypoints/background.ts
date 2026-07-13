@@ -1,11 +1,14 @@
 import browser from 'webextension-polyfill';
 import { handleDownload } from '../src/background/download';
-import type { ExtensionMessage } from '../src/core/messages';
+import { isDownloadRequest } from '../src/core/messages';
+import { logger } from '../src/core/logger';
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((msg: unknown) => {
-    const m = msg as ExtensionMessage;
-    if (m.kind === 'download') return handleDownload(m);
-    return false;
+    if (!isDownloadRequest(msg)) {
+      logger.warn('Ignoring malformed runtime message', msg);
+      return false;
+    }
+    return handleDownload(msg);
   });
 });

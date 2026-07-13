@@ -8,3 +8,15 @@ export type DownloadRequest = {
 };
 
 export type ExtensionMessage = DownloadRequest;
+
+/** Runtime type guard for `DownloadRequest` — validates messages crossing the
+ * content-script → background boundary before they're trusted. */
+export function isDownloadRequest(msg: unknown): msg is DownloadRequest {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  if (m.kind !== 'download') return false;
+  if (typeof m.mediaURL !== 'string' || typeof m.accountName !== 'string') return false;
+  if (m.postShortcode !== undefined && typeof m.postShortcode !== 'string') return false;
+  if (m.index !== undefined && typeof m.index !== 'number') return false;
+  return true;
+}
