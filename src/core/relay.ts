@@ -175,11 +175,23 @@ export function extractAllSlidesFromRelay(shortcode: string | null): RelaySlide[
   return [single];
 }
 
-/** Async fallback: fetches media info from the Instagram API using the session cookie. */
+const API_FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * Async fallback: fetches media info from the Instagram API using the
+ * session cookie. Bounded by a 10s AbortController timeout so a hung request
+ * doesn't leave the caller waiting indefinitely — a timeout resolves to
+ * `null` just like any other failure, so the existing fallback chain/toast
+ * in PostDownloader.onClick() handles it without needing to distinguish an
+ * abort from a network error.
+ */
 export async function fetchVideoURLFromAPI(mediaId: string): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), API_FETCH_TIMEOUT_MS);
   try {
     const resp = await fetch(`https://www.instagram.com/api/v1/media/${mediaId}/info/`, {
       credentials: 'include',
+      signal: controller.signal,
     });
     if (!resp.ok) return null;
     const data: unknown = await resp.json();
@@ -192,6 +204,10 @@ export async function fetchVideoURLFromAPI(mediaId: string): Promise<string | nu
     logger.log('API fallback hit for mediaId', mediaId);
     return pickBestURL(versions);
   } catch {
+    // Covers both a genuine fetch/network failure and the AbortError thrown
+    // when the timeout fires — either way, null lets the caller fall back.
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }

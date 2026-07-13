@@ -82,7 +82,7 @@ export class PostDownloader {
     }
     if (!saveOuter) return;
 
-    const btn = createDownloadButton(() => void this.onClick(container));
+    const btn = createDownloadButton(() => this.onClick(container));
     btn.classList.add(BTN_CLASS);
 
     // The action-bar section is a 2-column CSS grid (`grid-template-columns:

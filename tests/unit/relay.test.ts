@@ -123,6 +123,7 @@ describe('relaySlideMatchesURL', () => {
 describe('fetchVideoURLFromAPI', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it('returns the type-101 video URL from the API response', async () => {
@@ -153,5 +154,36 @@ describe('fetchVideoURLFromAPI', () => {
   it('returns null when fetch rejects', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network')));
     await expect(fetchVideoURLFromAPI('123')).resolves.toBe(null);
+  });
+
+  it('aborts and returns null after 10s when the request never settles', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      (_url: string, opts: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          opts.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted', 'AbortError'));
+          });
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const promise = fetchVideoURLFromAPI('123');
+    let settled = false;
+    void promise.then(() => {
+      settled = true;
+    });
+
+    // Not resolved yet — the request is still "in flight" just before the
+    // timeout fires.
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(false);
+
+    // Crossing the 10s mark fires the AbortController, which rejects the
+    // fetch; fetchVideoURLFromAPI's catch block turns that into `null`
+    // rather than an unhandled rejection.
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(promise).resolves.toBe(null);
   });
 });
