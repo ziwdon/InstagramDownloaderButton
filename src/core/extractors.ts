@@ -1,7 +1,27 @@
 import { AUTHOR_LINK, CAROUSEL_SLIDE_MEDIA, PERMALINK, POST_IMG, POST_VIDEO } from './selectors';
 
+/**
+ * Query `scope` for each selector in `selectors` in array order, returning the
+ * first element that matches. Unlike `scope.querySelector(selectors.join(','))`
+ * — which returns the first match in *document* order regardless of which
+ * selector produced it — this honors the priority encoded by the array's order,
+ * so a more-specific selector listed first wins over a broader fallback even
+ * when the fallback's match appears earlier in the DOM.
+ *
+ * Only use this for selector arrays whose order encodes real precedence. For
+ * arrays where any match is equally acceptable (e.g. the aria-label-OR-geometry
+ * anchors in selectors.ts), a comma-join is correct and cheaper.
+ */
+export function queryByPriority(scope: ParentNode, selectors: readonly string[]): Element | null {
+  for (const sel of selectors) {
+    const el = scope.querySelector(sel);
+    if (el) return el;
+  }
+  return null;
+}
+
 export function extractAuthor(scope: HTMLElement): string {
-  const a = scope.querySelector(AUTHOR_LINK.join(',')) as HTMLAnchorElement | null;
+  const a = queryByPriority(scope, AUTHOR_LINK) as HTMLAnchorElement | null;
   if (!a) return 'unknown';
   return a.getAttribute('href')?.replace(/^\/|\/$/g, '') ?? 'unknown';
 }
@@ -42,7 +62,7 @@ function extractFromScope(s: HTMLElement): { url: string; kind: 'image' | 'video
   const video = s.querySelector(POST_VIDEO) as HTMLVideoElement | null;
   if (video) return { url: video.currentSrc, kind: 'video' };
 
-  const img = s.querySelector(POST_IMG.join(',')) as HTMLImageElement | null;
+  const img = queryByPriority(s, POST_IMG) as HTMLImageElement | null;
   if (img) return { url: pickBestSrc(img), kind: 'image' };
 
   return null;
