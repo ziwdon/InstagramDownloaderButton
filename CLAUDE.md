@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A browser extension that adds a one-click download button to individual Instagram posts. Supports Chrome and Firefox via Manifest V3. Built with `wxt` (Vite-based), TypeScript 5 strict, ESLint + Prettier. `master` is the main branch.
 
-Features in scope: per-post download button (images and videos). Out of scope (removed): `Ctrl+Shift+D` hotkey, bulk downloader, story downloader, account-image downloader, options UI.
+Features in scope: per-post download button (images and videos). **Video downloads are currently disabled by default** via a compile-time kill-switch (`src/core/config.ts`'s `VIDEO_DOWNLOADS_ENABLED = false`) — the video code path is fully intact, just gated off, because it depends on undocumented Instagram internals that can break without warning (see "Video extraction" below); flipping the constant re-enables it. Image downloads are unaffected and always live. Out of scope (removed): `Ctrl+Shift+D` hotkey, bulk downloader, story downloader, account-image downloader, options UI.
 
 ## Build commands
 
@@ -92,8 +92,8 @@ The extension has three execution contexts:
 3. On `home/post/reel`, `PostDownloader.init()` is called: runs an immediate scan, then sets up a debounced `MutationObserver` on `document.body`.
 4. Each scan iterates **Save SVGs** (one per post — reliable on every page variant). For each, `findPostContainer()` returns `closest('article')` for feed/modal posts, or walks up from the action bar to the smallest ancestor containing a non-action-bar, non-profile image/video — necessary because permalink (post / reel / video) pages no longer wrap posts in `<article>`. `ensureButton()` then inserts the download button next to Save in the action bar.
 5. On click, the extension downloads only the **currently visible slide** (image or video). `extractCurrentMediaURL()` finds the post carousel `<ul>` (the first one whose direct `<li>` children carry post media) and picks the slide with the largest horizontal overlap with the carousel viewport (via `getBoundingClientRect`). For single posts (no carousel), it falls back to scope-level extraction. Images prefer the highest-resolution `srcset` entry; videos return `currentSrc` to be replaced by a relay/API URL.
-6. For video posts, `PostDownloader.onClick()` first tries `extractAllSlidesFromRelay()` (reads the Relay prefetch JSON embedded in page `<script>` tags) and indexes into it via `findActiveSlide()`, then falls back to `fetchVideoURLFromAPI()` (hits `/api/v1/media/{id}/info/` with session cookies). On failure it shows a toast and aborts.
-7. Background `handleDownload()` calls `browser.downloads.download({ url, filename })`. On Firefox, retries with an explicit `Referer` header if the first attempt fails.
+6. For video posts, if `VIDEO_DOWNLOADS_ENABLED` is `false` (the default), `onClick()` shows a toast ("Video downloads are currently disabled") and returns before any relay/API work runs. When enabled, `PostDownloader.onClick()` tries `extractAllSlidesFromRelay()` (reads the Relay prefetch JSON embedded in page `<script>` tags) and resolves the active slide via `pickActiveRelaySlide()`, then falls back to `fetchVideoURLFromAPI()` (hits `/api/v1/media/{id}/info/` with session cookies) — first by the slide's `pk`, then by a shortcode-derived media ID if that fails. On failure it shows a toast and aborts. See "Video extraction" below for the full resolution order.
+7. Background `handleDownload()` calls `browser.downloads.download({ url, filename })`. On Firefox, the `Referer` header is sent on this first attempt (no retry — see "Background constraints" below for why a retry-on-reject doesn't work for this).
 
 ### Source layout
 
@@ -105,12 +105,13 @@ entrypoints/
 
 src/
   core/
-    messages.ts           # shared message types: DownloadRequest, AlertPush, ExtensionMessage
+    messages.ts           # shared message type: DownloadRequest, isDownloadRequest() guard
+    config.ts             # VIDEO_DOWNLOADS_ENABLED compile-time kill-switch
     selectors.ts          # all Instagram DOM selectors — most fragile file
     extractors.ts         # pulls mediaURL / author / shortcode from a post container; locates active carousel slide
     relay.ts              # video URL extraction: relay cache reader + API fallback
     shortcode.ts          # shortcodeToMediaId() — base-64 decode of shortcode → numeric media ID
-    logger.ts             # dev-only console wrapper (no-op in production)
+    logger.ts             # dev-only console wrapper (no-op in production; error() stays unconditional)
   content/
     AddonManager.ts       # wires UrlRouter → PostDownloader
     UrlRouter.ts          # classifies location.href, fires onChange on route transitions
@@ -120,6 +121,8 @@ src/
       DownloadButton.ts   # renders the <button> with inline SVG
   background/
     download.ts           # fetch-free download via browser.downloads API
+    filename.ts           # buildFilename()/sanitize() — pure, extracted for Node/vitest testability
+    url-validation.ts     # isDownloadableURL() — http(s)-only scheme check, same testability reason
   styles/
     main.scss             # .igdl-btn button styles
     alert.scss            # .igdl-alert toast styles
@@ -170,18 +173,23 @@ If a selector breaks: update `src/core/selectors.ts`, verify against HTML in `re
 
 ### Message types (`src/core/messages.ts`)
 
-All cross-context communication is typed via `ExtensionMessage = DownloadRequest | AlertPush | LocationChange`. The background only handles `kind === 'download'`; the `AlertPush` and `LocationChange` types are reserved for potential future relay use.
+All cross-context communication is typed via `ExtensionMessage = DownloadRequest`. `DownloadRequest` carries `mediaURL`, `accountName`, `mediaKind: 'image' | 'video'` (used by the background to pick a default file extension when the URL itself doesn't reveal one), and optional `postShortcode`/`index`. `isDownloadRequest(msg: unknown): msg is DownloadRequest` validates a message's shape at the background boundary before it's trusted — a malformed/missing message is logged (dev-only) and dropped rather than throwing. There used to be `AlertPush`/`LocationChange` members reserved for a future background→content notification relay; they were removed as dead code since nothing constructed or sent them.
 
 ### Video extraction (`src/core/relay.ts`)
+
+**Video downloads are disabled by default** (`src/core/config.ts`'s `VIDEO_DOWNLOADS_ENABLED = false`) — `PostDownloader.onClick()` checks this flag as soon as the active slide resolves to a video, before any relay/API work, and shows a toast instead. The mechanism below describes what runs when the flag is re-enabled; it's fully implemented and unit-tested, just gated off, because both of its data sources are undocumented Instagram internals that can change without warning (unlike images, whose URLs come straight from the on-screen `<img srcset>`).
 
 Video CDN URLs are not in `srcset` — the `<video>` element only exposes an HLS blob or a short-lived URL that often fails to download. The real MP4 URL comes from the Instagram Relay GraphQL cache embedded in the page as `<script type="application/json" data-sjs>` tags.
 
 Resolution order in `PostDownloader.onClick()`:
-1. `extractAllSlidesFromRelay(shortcode)` — scans those `<script>` tags for `xdt_api__v1__media__shortcode__web_info`, finds the matching `code`, returns one entry per slide with `video_versions` (prefers `type === 101`), `image_versions2`, and `pk`. `pickActiveRelaySlide()` picks the entry that matches `findActiveSlide()`'s carousel index.
-2. If the relay slide has no `videoURL` but has a `pk`, `fetchVideoURLFromAPI(pk)` hits `https://www.instagram.com/api/v1/media/{id}/info/` with `credentials: 'include'`.
-3. If both fail, the DOM `<video>.currentSrc` is used as a last resort (filtered out if it's a `blob:` URL, which can't cross the content-script → service-worker boundary). Otherwise a toast is shown and the download is aborted.
+1. `extractAllSlidesFromRelay(shortcode)` — scans those `<script>` tags for `xdt_api__v1__media__shortcode__web_info`, finds the matching `code`, returns one entry per slide with `video_versions` (prefers `type === 101`), `image_versions2`, and `pk`. `pickActiveRelaySlide()` resolves the active slide: first by matching the DOM's current media URL against the slides' candidates (`getActiveSlideMatchURL`/`relaySlideMatchesURL`); if that fails, it falls back to `findActiveSlide()`'s DOM carousel index — but **only when the DOM's rendered slide count equals the relay payload's slide count** (`findActiveSlide().total === slides.length`). Instagram windows carousels for deep links (e.g. `?img_index=N`), so a DOM index can't always be trusted to line up positionally with the relay array; when the counts diverge (or there's no carousel at all and the URL match already failed), `pickActiveRelaySlide()` returns `null` rather than guessing, and callers fall through to their next fallback. This same function also backs the image-download relay fallback (see below).
+2. If the relay slide has no `videoURL` but has a `pk`, `fetchVideoURLFromAPI(pk)` hits `https://www.instagram.com/api/v1/media/{id}/info/` with `credentials: 'include'` (10s timeout via `AbortController`; aborts resolve to `null` rather than throwing, so the fallback chain continues).
+3. If that fails and a shortcode is known, `shortcodeToMediaId()` derives a media ID directly from the shortcode (works even when `pickActiveRelaySlide()` returned `null`) and `fetchVideoURLFromAPI()` is tried again with that ID.
+4. If all of that fails, the DOM `<video>.currentSrc` is used as a last resort (filtered out if it's a `blob:` URL, which can't cross the content-script → service-worker boundary). Otherwise a toast is shown and the download is aborted.
 
 The API fetch runs in the content script (not the background), so session cookies are available automatically.
+
+**Image downloads** use the DOM `srcset` URL as primary; when that's null/blob/expired, `onClick()` falls back to the same `extractAllSlidesFromRelay()` + `pickActiveRelaySlide()` machinery described above and takes the resolved slide's `image_versions2` candidate. This fallback is NOT gated by `VIDEO_DOWNLOADS_ENABLED` — it's always live.
 
 **Two relay extraction paths:** `findRelayItem()` (internal) tries both keys in order:
 1. `xdt_api__v1__media__shortcode__web_info` — permalink pages (post / reel / video).
