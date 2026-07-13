@@ -233,13 +233,26 @@ function pickActiveRelaySlide(scope: HTMLElement, slides: RelaySlide[]): RelaySl
     if (matched) return matched;
   }
 
+  // Only trust the DOM's positional carousel index when the DOM rendered the
+  // same number of slides as the relay payload has. Instagram windows
+  // carousels for deep links (e.g. `?img_index=N`), so the DOM slide count
+  // and the relay slide count can diverge; when they do, DOM index N no
+  // longer corresponds to relay index N, and indexing into `slides` would
+  // silently resolve the wrong media (F3). `findActiveSlide`'s `total` is the
+  // same DOM slide-carrier count used to compute `index`, so this check
+  // reuses that logic rather than recomputing it.
   const active = findActiveSlide(scope);
-  if (active && active.index < slides.length) {
+  if (active && active.total === slides.length) {
     const slide = slides[active.index];
     if (slide) return slide;
   }
 
-  return slides.find((s) => s.videoURL !== null) ?? slides[0] ?? null;
+  // Counts diverged (or no carousel was found at all) and the URL match
+  // above failed too: there is no trustworthy way to pick a slide here.
+  // Returning null lets the caller's own fallback take over — the
+  // shortcode-derived API fetch for video, or the "could not locate media"
+  // toast for images — rather than guessing positionally.
+  return null;
 }
 
 function nonBlobOrNull(url: string): string | null {
