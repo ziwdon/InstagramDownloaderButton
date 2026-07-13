@@ -15,4 +15,11 @@ export default defineBackground(() => {
     }
     return handleDownload(msg);
   });
+
+  // No `default_popup` is set, so the toolbar icon has no default click
+  // behavior — this listener is what makes clicking it do something useful
+  // instead of being a dead affordance.
+  browser.action.onClicked.addListener(() => {
+    void browser.tabs.create({ url: 'https://www.instagram.com/' });
+  });
 });
