@@ -191,7 +191,8 @@ The API fetch runs in the content script (not the background), so session cookie
 
 - No `XMLHttpRequest`, no `URL.createObjectURL`, no `window.*`
 - No blob intermediaries — CDN URLs are passed directly to `browser.downloads.download()`
-- Firefox-only: retry download with `headers: [{ name: 'Referer', value: 'https://www.instagram.com/' }]` if first attempt fails
+- Firefox-only: `headers: [{ name: 'Referer', value: 'https://www.instagram.com/' }]` is sent on the **first** `downloads.download()` attempt (Chrome's call is unchanged, with no `headers` key — Chrome doesn't support it). There is no retry: `download()` resolves once a download is *queued*, not once it completes, so a later failure (e.g. a Referer-sensitive CDN 403) never surfaces as a rejection of that promise — it only shows up via `downloads.onChanged`.
+- `src/background/download.ts` registers a `downloads.onChanged` listener (`registerDownloadTracking()`, called synchronously at service-worker startup) that tracks ids this extension queued and logs the reason when one reaches state `'interrupted'` — debug-only, no user-facing notification. A small bounded buffer reconciles the rare case where that event arrives before the id is tracked (see the `earlyTerminalEvents` doc comment in that file), so the tracking Map cannot leak.
 - Use `import.meta.env.BROWSER` (injected by `wxt`) to branch browser-specific behavior
 
 ### TypeScript
