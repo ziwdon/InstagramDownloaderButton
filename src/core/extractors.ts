@@ -37,9 +37,27 @@ export function extractCurrentMediaURL(
 ): { url: string; kind: 'image' | 'video' } | null {
   const active = findActiveCarouselSlide(scope);
   if (active) {
+    // Primary: the same POST_VIDEO/POST_IMG criteria used everywhere else.
     const result = extractFromScope(active);
     if (result) return result;
+
+    // Fallback: the slide was recognized as a carousel slide by matching
+    // CAROUSEL_SLIDE_MEDIA, but POST_IMG/POST_VIDEO failed to re-find its media
+    // (e.g. an <img alt="" src="…cdninstagram…"> — accepted by
+    // CAROUSEL_SLIDE_MEDIA but excluded by POST_IMG's :not([alt=""]) fallback).
+    // Re-query the slide with the exact criteria it already matched; since the
+    // slide matched to be recognized as a slide, this cannot miss.
+    const slideResult = extractSlideMedia(active);
+    if (slideResult) return slideResult;
+
+    // A carousel was positively detected but no media could be resolved in the
+    // active slide (defensive — the CAROUSEL_SLIDE_MEDIA lookup above cannot
+    // miss for a real slide). Return null so the caller shows a "could not
+    // locate media" toast, rather than falling through to scope-level
+    // extraction — which would silently return slide 0's media (the wrong file).
+    return null;
   }
+  // No carousel: scope-level extraction is the primary (and only) path.
   return extractFromScope(scope);
 }
 
@@ -64,6 +82,26 @@ function extractFromScope(s: HTMLElement): { url: string; kind: 'image' | 'video
 
   const img = queryByPriority(s, POST_IMG) as HTMLImageElement | null;
   if (img) return { url: pickBestSrc(img), kind: 'image' };
+
+  return null;
+}
+
+/**
+ * Slide-scoped media lookup using the exact CAROUSEL_SLIDE_MEDIA criteria the
+ * slide already matched to be recognized as a carousel slide. Used only as a
+ * last resort inside an identified active slide, when POST_VIDEO/POST_IMG
+ * (extractFromScope) came up empty — covers media that CAROUSEL_SLIDE_MEDIA
+ * accepts but POST_IMG rejects (e.g. alt="" cdninstagram images). Video is
+ * checked first so a video slide never resolves to its poster image.
+ */
+function extractSlideMedia(slide: HTMLElement): { url: string; kind: 'image' | 'video' } | null {
+  const video = slide.querySelector(POST_VIDEO) as HTMLVideoElement | null;
+  if (video) return { url: video.currentSrc, kind: 'video' };
+
+  const media = slide.querySelector(CAROUSEL_SLIDE_MEDIA);
+  if (media && media.tagName === 'IMG') {
+    return { url: pickBestSrc(media as HTMLImageElement), kind: 'image' };
+  }
 
   return null;
 }

@@ -3,7 +3,7 @@ import { Window } from 'happy-dom';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { extractAuthor, queryByPriority } from '../../src/core/extractors';
+import { extractAuthor, extractCurrentMediaURL, queryByPriority } from '../../src/core/extractors';
 import { AUTHOR_LINK, POST_IMG } from '../../src/core/selectors';
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'dom');
@@ -120,5 +120,65 @@ describe('image extraction prefers alt^="Photo by"-family over broad fallbacks',
     const img = queryByPriority(doc, POST_IMG) as HTMLImageElement | null;
     expect(img!.getAttribute('alt') ?? '').toMatch(POST_ALT_PREFIX);
     expect(img!.getAttribute('alt') ?? '').not.toMatch(/^Foto del perfil/);
+  });
+});
+
+// Stubs getBoundingClientRect so pickActiveSlide (overlap-based) is deterministic
+// in happy-dom, where layout is not computed. `rect` gives {left,right}; the
+// active slide is the one whose horizontal span overlaps the viewport most.
+function stubRect(el: Element, left: number, right: number): void {
+  (el as unknown as { getBoundingClientRect: () => DOMRect }).getBoundingClientRect = () =>
+    ({ left, right, top: 0, bottom: 0, width: right - left, height: 0, x: left, y: 0 }) as DOMRect;
+}
+
+describe('extractCurrentMediaURL resolves the active slide, never silently falling to slide 0', () => {
+  function buildCarousel(): { doc: Document; scope: HTMLElement; ul: HTMLUListElement } {
+    const win = new Window({ settings: { disableComputedStyleRendering: true } });
+    const doc = win.document as unknown as Document;
+    // Slide 0: an ordinary "Photo by …" image (matches POST_IMG). Slide 1: an
+    // image with alt="" and a cdninstagram src — accepted by CAROUSEL_SLIDE_MEDIA
+    // (so it's recognized as a slide) but rejected by POST_IMG (:not([alt=""])).
+    doc.body.innerHTML = `
+      <div id="scope">
+        <ul>
+          <li><img alt="Photo by IGN on May 07, 2026." src="https://slide0.cdninstagram.com/slide0.jpg"></li>
+          <li><img alt="" src="https://slide1.cdninstagram.com/slide1.jpg"></li>
+        </ul>
+      </div>`;
+    const scope = doc.getElementById('scope') as unknown as HTMLElement;
+    const ul = scope.querySelector('ul') as unknown as HTMLUListElement;
+    return { doc, scope, ul };
+  }
+
+  it('returns the active slide’s own cdninstagram URL when POST_IMG cannot re-find its media', () => {
+    const { scope, ul } = buildCarousel();
+    const [li0, li1] = Array.from(ul.querySelectorAll('li'));
+    // Make slide 1 the visually active slide (fully overlapping the viewport),
+    // slide 0 scrolled off to the left (no overlap).
+    stubRect(scope, 0, 100); // viewport (ul.parentElement) rect
+    stubRect(li0!, -100, 0);
+    stubRect(li1!, 0, 100);
+
+    const result = extractCurrentMediaURL(scope);
+    expect(result).toEqual({ url: 'https://slide1.cdninstagram.com/slide1.jpg', kind: 'image' });
+    // Regression guard: must NOT be slide 0's URL (the container's first image,
+    // which scope-level extraction would have silently returned before the fix).
+    expect(result!.url).not.toContain('slide0');
+  });
+
+  it('single post (no carousel) still resolves via scope-level extraction', () => {
+    const win = new Window({ settings: { disableComputedStyleRendering: true } });
+    const doc = win.document as unknown as Document;
+    // No <ul> carrying media → findActiveCarouselSlide returns null → scope path.
+    doc.body.innerHTML = `
+      <div id="scope">
+        <img alt="Photo by IGN on May 07, 2026." src="https://single.cdninstagram.com/only.jpg">
+      </div>`;
+    const scope = doc.getElementById('scope') as unknown as HTMLElement;
+
+    expect(extractCurrentMediaURL(scope)).toEqual({
+      url: 'https://single.cdninstagram.com/only.jpg',
+      kind: 'image',
+    });
   });
 });
