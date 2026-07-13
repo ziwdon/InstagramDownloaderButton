@@ -151,6 +151,7 @@ export class PostDownloader {
       kind: 'download',
       mediaURL: downloadURL,
       accountName,
+      mediaKind: media.kind,
       ...(shortcode !== null && { postShortcode: shortcode }),
     };
     try {

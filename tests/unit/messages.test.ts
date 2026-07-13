@@ -8,6 +8,7 @@ describe('isDownloadRequest', () => {
         kind: 'download',
         mediaURL: 'https://scontent.cdninstagram.com/v/t51/photo.jpg',
         accountName: 'someuser',
+        mediaKind: 'image',
       }),
     ).toBe(true);
   });
@@ -18,6 +19,7 @@ describe('isDownloadRequest', () => {
         kind: 'download',
         mediaURL: 'https://x/y.jpg',
         accountName: 'someuser',
+        mediaKind: 'video',
         postShortcode: 'DWpUzi1DeyI',
         index: 2,
       }),
@@ -33,17 +35,58 @@ describe('isDownloadRequest', () => {
 
   it('rejects messages with the wrong kind', () => {
     expect(
-      isDownloadRequest({ kind: 'alert', mediaURL: 'https://x/y.jpg', accountName: 'u' }),
+      isDownloadRequest({
+        kind: 'alert',
+        mediaURL: 'https://x/y.jpg',
+        accountName: 'u',
+        mediaKind: 'image',
+      }),
     ).toBe(false);
     expect(isDownloadRequest({ mediaURL: 'https://x/y.jpg', accountName: 'u' })).toBe(false);
   });
 
   it('rejects when mediaURL or accountName are missing or non-string', () => {
-    expect(isDownloadRequest({ kind: 'download', accountName: 'u' })).toBe(false);
+    expect(isDownloadRequest({ kind: 'download', accountName: 'u', mediaKind: 'image' })).toBe(
+      false,
+    );
     expect(isDownloadRequest({ kind: 'download', mediaURL: 'https://x/y.jpg' })).toBe(false);
-    expect(isDownloadRequest({ kind: 'download', mediaURL: 123, accountName: 'u' })).toBe(false);
     expect(
-      isDownloadRequest({ kind: 'download', mediaURL: 'https://x/y.jpg', accountName: 7 }),
+      isDownloadRequest({
+        kind: 'download',
+        mediaURL: 123,
+        accountName: 'u',
+        mediaKind: 'image',
+      }),
+    ).toBe(false);
+    expect(
+      isDownloadRequest({
+        kind: 'download',
+        mediaURL: 'https://x/y.jpg',
+        accountName: 7,
+        mediaKind: 'image',
+      }),
+    ).toBe(false);
+  });
+
+  it('rejects when mediaKind is missing or not exactly "image"/"video"', () => {
+    expect(
+      isDownloadRequest({ kind: 'download', mediaURL: 'https://x/y.jpg', accountName: 'u' }),
+    ).toBe(false);
+    expect(
+      isDownloadRequest({
+        kind: 'download',
+        mediaURL: 'https://x/y.jpg',
+        accountName: 'u',
+        mediaKind: 'photo',
+      }),
+    ).toBe(false);
+    expect(
+      isDownloadRequest({
+        kind: 'download',
+        mediaURL: 'https://x/y.jpg',
+        accountName: 'u',
+        mediaKind: '',
+      }),
     ).toBe(false);
   });
 
@@ -53,6 +96,7 @@ describe('isDownloadRequest', () => {
         kind: 'download',
         mediaURL: 'https://x/y.jpg',
         accountName: 'u',
+        mediaKind: 'image',
         postShortcode: 123,
       }),
     ).toBe(false);
@@ -61,6 +105,7 @@ describe('isDownloadRequest', () => {
         kind: 'download',
         mediaURL: 'https://x/y.jpg',
         accountName: 'u',
+        mediaKind: 'image',
         index: '3',
       }),
     ).toBe(false);

@@ -7,6 +7,7 @@ function req(overrides: Partial<DownloadRequest> = {}): DownloadRequest {
     kind: 'download',
     mediaURL: 'https://scontent.cdninstagram.com/v/t51/photo.jpg?_nc=1',
     accountName: 'someuser',
+    mediaKind: 'image',
     ...overrides,
   };
 }
@@ -58,5 +59,57 @@ describe('buildFilename', () => {
   it('sanitizes an account name containing unsafe characters', () => {
     const name = buildFilename(req({ accountName: 'a b/c', postShortcode: 'X' }));
     expect(name).toBe('a_b_c_X.jpg');
+  });
+
+  it('keeps a normal video URL extension unchanged', () => {
+    const name = buildFilename(
+      req({
+        mediaURL: 'https://scontent.cdninstagram.com/v/t50/clip.mp4?_nc=1',
+        mediaKind: 'video',
+        postShortcode: 'DWpUzi1DeyI',
+      }),
+    );
+    expect(name).toBe('someuser_DWpUzi1DeyI.mp4');
+  });
+
+  it('defaults to .mp4 for a signed video URL with no recognized extension', () => {
+    // Signed CDN video URLs commonly have no file extension in the path at all,
+    // e.g. an API-resolved redirect target — guessExtension() returns ''.
+    const name = buildFilename(
+      req({
+        mediaURL: 'https://scontent.cdninstagram.com/o1/v/t2/f2/m367/signed-blob-no-ext',
+        mediaKind: 'video',
+        postShortcode: 'DWpUzi1DeyI',
+      }),
+    );
+    expect(name).toBe('someuser_DWpUzi1DeyI.mp4');
+  });
+
+  it('defaults to .jpg for an image URL with no recognized extension', () => {
+    const name = buildFilename(
+      req({
+        mediaURL: 'https://scontent.cdninstagram.com/o1/v/t2/f2/m367/signed-blob-no-ext',
+        mediaKind: 'image',
+        postShortcode: 'DWpUzi1DeyI',
+      }),
+    );
+    expect(name).toBe('someuser_DWpUzi1DeyI.jpg');
+  });
+
+  it('keeps the extension intact when the account name is very long (500 chars)', () => {
+    const longAccountName = 'a'.repeat(500);
+    const name = buildFilename(
+      req({
+        accountName: longAccountName,
+        mediaURL: 'https://x/clip.mp4',
+        mediaKind: 'video',
+        postShortcode: 'X',
+      }),
+    );
+    expect(name.endsWith('.mp4')).toBe(true);
+    // Base (everything before the extension) is capped at 180 chars — this
+    // would have failed under the old "sanitize-then-slice(0,200)" ordering,
+    // which truncated the extension off entirely for inputs this long.
+    expect(name).toBe(`${'a'.repeat(180)}.mp4`);
   });
 });
