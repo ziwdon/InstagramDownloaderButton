@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A browser extension that adds a one-click download button to individual Instagram posts. Supports Chrome and Firefox via Manifest V3. Built with `wxt` (Vite-based), TypeScript 5 strict, ESLint + Prettier. `master` is the main branch.
 
-Features in scope: per-post download button (images and videos). Out of scope (removed): `Ctrl+Shift+D` hotkey, bulk downloader, story downloader, account-image downloader, options UI.
+Features in scope: per-post download button (images and videos). **Video downloads are currently disabled by default** via a compile-time kill-switch (`src/core/config.ts`'s `VIDEO_DOWNLOADS_ENABLED = false`) — the video code path is fully intact, just gated off, because it depends on undocumented Instagram internals that can break without warning (see "Video extraction" below); flipping the constant re-enables it. Image downloads are unaffected and always live. Out of scope (removed): `Ctrl+Shift+D` hotkey, bulk downloader, story downloader, account-image downloader, options UI.
 
 ## Build commands
 
@@ -19,6 +19,8 @@ npm run dev:firefox      # wxt dev server (Firefox)
 npm run build            # build Chrome MV3 + Firefox MV3 → .output/
 npm run zip              # build + store-ready zips
 npm run typecheck        # tsc --noEmit
+npm run test             # vitest run (unit + DOM-selector suite)
+npm run test:watch       # vitest (watch mode)
 npm run lint             # eslint + prettier check
 npm run lint:fix         # eslint --fix + prettier --write
 npm run amo-lint         # addons-linter on .output/firefox-mv3-zip/*.zip
@@ -26,7 +28,36 @@ npm run amo-lint         # addons-linter on .output/firefox-mv3-zip/*.zip
 
 Build outputs: `.output/chrome-mv3/` and `.output/firefox-mv3/` (unpacked), `.output/*-zip/` (store-ready). No `dist/` or `zip/` directories.
 
-There is no test suite — the project relies on manual smoke testing against live Instagram pages.
+### Testing
+
+A `vitest` suite covers the extension's pure logic and DOM selectors; live-Instagram
+manual smoke testing is still needed for end-to-end download behavior (network,
+`browser.downloads`, Instagram's live DOM). Config: `vitest.config.ts` (standalone;
+`happy-dom` environment). Tests live in `tests/` (see `tests/README.md`). Three tiers:
+
+1. **Pure logic** (`tests/unit/`): `shortcodeToMediaId()`, `buildFilename()`
+   (`src/background/filename.ts` — extracted from `download.ts` so it is testable
+   without the `webextension-polyfill` import, which throws outside an extension),
+   `classify()` (URL routing), and the `relay.ts` traversal fed with trimmed fixture
+   JSON.
+2. **DOM selectors** (`tests/dom/`): loads per-variant HTML fixtures and asserts
+   `SAVE_SVG` count per post, action-bar resolution (via the `closest('section')` path
+   production uses), `POST_IMG` finding post media but never avatars, and locale
+   stability on the Spanish snapshot.
+3. CI runs `npm test` between typecheck and build (`ci.yml`).
+
+**Fixtures** (`tests/fixtures/`): `references/*.html` is gitignored and multi-MB, so it
+is NOT loaded directly. `scripts/extract-fixtures.mjs` (run manually against a local
+`references/` dir) derives small committed fixtures: `fixtures/dom/*.html` (snapshots
+with `<script>/<style>/<link>` stripped — irrelevant to selector queries, ~5-10x
+smaller) and `fixtures/relay/*.json` (trimmed Relay payloads). Regenerate with
+`node scripts/extract-fixtures.mjs /path/to/references`.
+
+**`:has()` caveat:** `happy-dom` (v20) supports single-level `:has()` but NOT nested
+`:has()`, so the `ACTION_BAR` constant (`section:has(svg:has(...))`) cannot be tested
+as a literal selector — that assertion is a documented `it.skip`. `SAVE_SVG`/`LIKE_SVG`
+(single-level `:has()`) test fine, and action-bar resolution is covered via
+`closest('section')`, which is production's primary path anyway.
 
 ## Releasing
 
@@ -40,7 +71,7 @@ The `publish.yml` workflow detects the version bump (compares `package.json` aga
 
 ## CI
 
-Every push and PR runs lint → typecheck → build → zip. Build artifacts (`.output/**/*.zip`) are uploaded as a GitHub Actions artifact named `extension-zips`. There is no separate test job — see `ci.yml`.
+Every push and PR runs lint → typecheck → test → build → zip. Build artifacts (`.output/**/*.zip`) are uploaded as a GitHub Actions artifact named `extension-zips`. See `ci.yml`.
 
 ## Architecture
 
@@ -61,8 +92,8 @@ The extension has three execution contexts:
 3. On `home/post/reel`, `PostDownloader.init()` is called: runs an immediate scan, then sets up a debounced `MutationObserver` on `document.body`.
 4. Each scan iterates **Save SVGs** (one per post — reliable on every page variant). For each, `findPostContainer()` returns `closest('article')` for feed/modal posts, or walks up from the action bar to the smallest ancestor containing a non-action-bar, non-profile image/video — necessary because permalink (post / reel / video) pages no longer wrap posts in `<article>`. `ensureButton()` then inserts the download button next to Save in the action bar.
 5. On click, the extension downloads only the **currently visible slide** (image or video). `extractCurrentMediaURL()` finds the post carousel `<ul>` (the first one whose direct `<li>` children carry post media) and picks the slide with the largest horizontal overlap with the carousel viewport (via `getBoundingClientRect`). For single posts (no carousel), it falls back to scope-level extraction. Images prefer the highest-resolution `srcset` entry; videos return `currentSrc` to be replaced by a relay/API URL.
-6. For video posts, `PostDownloader.onClick()` first tries `extractAllSlidesFromRelay()` (reads the Relay prefetch JSON embedded in page `<script>` tags) and indexes into it via `findActiveSlide()`, then falls back to `fetchVideoURLFromAPI()` (hits `/api/v1/media/{id}/info/` with session cookies). On failure it shows a toast and aborts.
-7. Background `handleDownload()` calls `browser.downloads.download({ url, filename })`. On Firefox, retries with an explicit `Referer` header if the first attempt fails.
+6. For video posts, if `VIDEO_DOWNLOADS_ENABLED` is `false` (the default), `onClick()` shows a toast ("Video downloads are currently disabled") and returns before any relay/API work runs. When enabled, `PostDownloader.onClick()` tries `extractAllSlidesFromRelay()` (reads the Relay prefetch JSON embedded in page `<script>` tags) and resolves the active slide via `pickActiveRelaySlide()`, then falls back to `fetchVideoURLFromAPI()` (hits `/api/v1/media/{id}/info/` with session cookies) — first by the slide's `pk`, then by a shortcode-derived media ID if that fails. On failure it shows a toast and aborts. See "Video extraction" below for the full resolution order.
+7. Background `handleDownload()` calls `browser.downloads.download({ url, filename })`. On Firefox, the `Referer` header is sent on this first attempt (no retry — see "Background constraints" below for why a retry-on-reject doesn't work for this).
 
 ### Source layout
 
@@ -74,12 +105,13 @@ entrypoints/
 
 src/
   core/
-    messages.ts           # shared message types: DownloadRequest, AlertPush, ExtensionMessage
+    messages.ts           # shared message type: DownloadRequest, isDownloadRequest() guard
+    config.ts             # VIDEO_DOWNLOADS_ENABLED compile-time kill-switch
     selectors.ts          # all Instagram DOM selectors — most fragile file
     extractors.ts         # pulls mediaURL / author / shortcode from a post container; locates active carousel slide
     relay.ts              # video URL extraction: relay cache reader + API fallback
     shortcode.ts          # shortcodeToMediaId() — base-64 decode of shortcode → numeric media ID
-    logger.ts             # dev-only console wrapper (no-op in production)
+    logger.ts             # dev-only console wrapper (no-op in production; error() stays unconditional)
   content/
     AddonManager.ts       # wires UrlRouter → PostDownloader
     UrlRouter.ts          # classifies location.href, fires onChange on route transitions
@@ -89,6 +121,8 @@ src/
       DownloadButton.ts   # renders the <button> with inline SVG
   background/
     download.ts           # fetch-free download via browser.downloads API
+    filename.ts           # buildFilename()/sanitize() — pure, extracted for Node/vitest testability
+    url-validation.ts     # isDownloadableURL() — http(s)-only scheme check, same testability reason
   styles/
     main.scss             # .igdl-btn button styles
     alert.scss            # .igdl-alert toast styles
@@ -139,18 +173,23 @@ If a selector breaks: update `src/core/selectors.ts`, verify against HTML in `re
 
 ### Message types (`src/core/messages.ts`)
 
-All cross-context communication is typed via `ExtensionMessage = DownloadRequest | AlertPush | LocationChange`. The background only handles `kind === 'download'`; the `AlertPush` and `LocationChange` types are reserved for potential future relay use.
+All cross-context communication is typed via `ExtensionMessage = DownloadRequest`. `DownloadRequest` carries `mediaURL`, `accountName`, `mediaKind: 'image' | 'video'` (used by the background to pick a default file extension when the URL itself doesn't reveal one), and optional `postShortcode`/`index`. `isDownloadRequest(msg: unknown): msg is DownloadRequest` validates a message's shape at the background boundary before it's trusted — a malformed/missing message is logged (dev-only) and dropped rather than throwing. There used to be `AlertPush`/`LocationChange` members reserved for a future background→content notification relay; they were removed as dead code since nothing constructed or sent them.
 
 ### Video extraction (`src/core/relay.ts`)
+
+**Video downloads are disabled by default** (`src/core/config.ts`'s `VIDEO_DOWNLOADS_ENABLED = false`) — `PostDownloader.onClick()` checks this flag as soon as the active slide resolves to a video, before any relay/API work, and shows a toast instead. The mechanism below describes what runs when the flag is re-enabled; it's fully implemented and unit-tested, just gated off, because both of its data sources are undocumented Instagram internals that can change without warning (unlike images, whose URLs come straight from the on-screen `<img srcset>`).
 
 Video CDN URLs are not in `srcset` — the `<video>` element only exposes an HLS blob or a short-lived URL that often fails to download. The real MP4 URL comes from the Instagram Relay GraphQL cache embedded in the page as `<script type="application/json" data-sjs>` tags.
 
 Resolution order in `PostDownloader.onClick()`:
-1. `extractAllSlidesFromRelay(shortcode)` — scans those `<script>` tags for `xdt_api__v1__media__shortcode__web_info`, finds the matching `code`, returns one entry per slide with `video_versions` (prefers `type === 101`), `image_versions2`, and `pk`. `pickActiveRelaySlide()` picks the entry that matches `findActiveSlide()`'s carousel index.
-2. If the relay slide has no `videoURL` but has a `pk`, `fetchVideoURLFromAPI(pk)` hits `https://www.instagram.com/api/v1/media/{id}/info/` with `credentials: 'include'`.
-3. If both fail, the DOM `<video>.currentSrc` is used as a last resort (filtered out if it's a `blob:` URL, which can't cross the content-script → service-worker boundary). Otherwise a toast is shown and the download is aborted.
+1. `extractAllSlidesFromRelay(shortcode)` — scans those `<script>` tags for `xdt_api__v1__media__shortcode__web_info`, finds the matching `code`, returns one entry per slide with `video_versions` (prefers `type === 101`), `image_versions2`, and `pk`. `pickActiveRelaySlide()` resolves the active slide: first by matching the DOM's current media URL against the slides' candidates (`getActiveSlideMatchURL`/`relaySlideMatchesURL`); if that fails, it falls back to `findActiveSlide()`'s DOM carousel index — but **only when the DOM's rendered slide count equals the relay payload's slide count** (`findActiveSlide().total === slides.length`). Instagram windows carousels for deep links (e.g. `?img_index=N`), so a DOM index can't always be trusted to line up positionally with the relay array; when the counts diverge (or there's no carousel at all and the URL match already failed), `pickActiveRelaySlide()` returns `null` rather than guessing, and callers fall through to their next fallback. This same function also backs the image-download relay fallback (see below).
+2. If the relay slide has no `videoURL` but has a `pk`, `fetchVideoURLFromAPI(pk)` hits `https://www.instagram.com/api/v1/media/{id}/info/` with `credentials: 'include'` (10s timeout via `AbortController`; aborts resolve to `null` rather than throwing, so the fallback chain continues).
+3. If that fails and a shortcode is known, `shortcodeToMediaId()` derives a media ID directly from the shortcode (works even when `pickActiveRelaySlide()` returned `null`) and `fetchVideoURLFromAPI()` is tried again with that ID.
+4. If all of that fails, the DOM `<video>.currentSrc` is used as a last resort (filtered out if it's a `blob:` URL, which can't cross the content-script → service-worker boundary). Otherwise a toast is shown and the download is aborted.
 
 The API fetch runs in the content script (not the background), so session cookies are available automatically.
+
+**Image downloads** use the DOM `srcset` URL as primary; when that's null/blob/expired, `onClick()` falls back to the same `extractAllSlidesFromRelay()` + `pickActiveRelaySlide()` machinery described above and takes the resolved slide's `image_versions2` candidate. This fallback is NOT gated by `VIDEO_DOWNLOADS_ENABLED` — it's always live.
 
 **Two relay extraction paths:** `findRelayItem()` (internal) tries both keys in order:
 1. `xdt_api__v1__media__shortcode__web_info` — permalink pages (post / reel / video).
@@ -160,7 +199,8 @@ The API fetch runs in the content script (not the background), so session cookie
 
 - No `XMLHttpRequest`, no `URL.createObjectURL`, no `window.*`
 - No blob intermediaries — CDN URLs are passed directly to `browser.downloads.download()`
-- Firefox-only: retry download with `headers: [{ name: 'Referer', value: 'https://www.instagram.com/' }]` if first attempt fails
+- Firefox-only: `headers: [{ name: 'Referer', value: 'https://www.instagram.com/' }]` is sent on the **first** `downloads.download()` attempt (Chrome's call is unchanged, with no `headers` key — Chrome doesn't support it). There is no retry: `download()` resolves once a download is *queued*, not once it completes, so a later failure (e.g. a Referer-sensitive CDN 403) never surfaces as a rejection of that promise — it only shows up via `downloads.onChanged`.
+- `src/background/download.ts` registers a `downloads.onChanged` listener (`registerDownloadTracking()`, called synchronously at service-worker startup) that tracks ids this extension queued and logs the reason when one reaches state `'interrupted'` — debug-only, no user-facing notification. A small bounded buffer reconciles the rare case where that event arrives before the id is tracked (see the `earlyTerminalEvents` doc comment in that file), so the tracking Map cannot leak.
 - Use `import.meta.env.BROWSER` (injected by `wxt`) to branch browser-specific behavior
 
 ### TypeScript

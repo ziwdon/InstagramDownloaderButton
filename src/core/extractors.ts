@@ -1,7 +1,27 @@
 import { AUTHOR_LINK, CAROUSEL_SLIDE_MEDIA, PERMALINK, POST_IMG, POST_VIDEO } from './selectors';
 
+/**
+ * Query `scope` for each selector in `selectors` in array order, returning the
+ * first element that matches. Unlike `scope.querySelector(selectors.join(','))`
+ * — which returns the first match in *document* order regardless of which
+ * selector produced it — this honors the priority encoded by the array's order,
+ * so a more-specific selector listed first wins over a broader fallback even
+ * when the fallback's match appears earlier in the DOM.
+ *
+ * Only use this for selector arrays whose order encodes real precedence. For
+ * arrays where any match is equally acceptable (e.g. the aria-label-OR-geometry
+ * anchors in selectors.ts), a comma-join is correct and cheaper.
+ */
+export function queryByPriority(scope: ParentNode, selectors: readonly string[]): Element | null {
+  for (const sel of selectors) {
+    const el = scope.querySelector(sel);
+    if (el) return el;
+  }
+  return null;
+}
+
 export function extractAuthor(scope: HTMLElement): string {
-  const a = scope.querySelector(AUTHOR_LINK.join(',')) as HTMLAnchorElement | null;
+  const a = queryByPriority(scope, AUTHOR_LINK) as HTMLAnchorElement | null;
   if (!a) return 'unknown';
   return a.getAttribute('href')?.replace(/^\/|\/$/g, '') ?? 'unknown';
 }
@@ -17,9 +37,27 @@ export function extractCurrentMediaURL(
 ): { url: string; kind: 'image' | 'video' } | null {
   const active = findActiveCarouselSlide(scope);
   if (active) {
+    // Primary: the same POST_VIDEO/POST_IMG criteria used everywhere else.
     const result = extractFromScope(active);
     if (result) return result;
+
+    // Fallback: the slide was recognized as a carousel slide by matching
+    // CAROUSEL_SLIDE_MEDIA, but POST_IMG/POST_VIDEO failed to re-find its media
+    // (e.g. an <img alt="" src="…cdninstagram…"> — accepted by
+    // CAROUSEL_SLIDE_MEDIA but excluded by POST_IMG's :not([alt=""]) fallback).
+    // Re-query the slide with the exact criteria it already matched; since the
+    // slide matched to be recognized as a slide, this cannot miss.
+    const slideResult = extractSlideMedia(active);
+    if (slideResult) return slideResult;
+
+    // A carousel was positively detected but no media could be resolved in the
+    // active slide (defensive — the CAROUSEL_SLIDE_MEDIA lookup above cannot
+    // miss for a real slide). Return null so the caller shows a "could not
+    // locate media" toast, rather than falling through to scope-level
+    // extraction — which would silently return slide 0's media (the wrong file).
+    return null;
   }
+  // No carousel: scope-level extraction is the primary (and only) path.
   return extractFromScope(scope);
 }
 
@@ -42,8 +80,28 @@ function extractFromScope(s: HTMLElement): { url: string; kind: 'image' | 'video
   const video = s.querySelector(POST_VIDEO) as HTMLVideoElement | null;
   if (video) return { url: video.currentSrc, kind: 'video' };
 
-  const img = s.querySelector(POST_IMG.join(',')) as HTMLImageElement | null;
+  const img = queryByPriority(s, POST_IMG) as HTMLImageElement | null;
   if (img) return { url: pickBestSrc(img), kind: 'image' };
+
+  return null;
+}
+
+/**
+ * Slide-scoped media lookup using the exact CAROUSEL_SLIDE_MEDIA criteria the
+ * slide already matched to be recognized as a carousel slide. Used only as a
+ * last resort inside an identified active slide, when POST_VIDEO/POST_IMG
+ * (extractFromScope) came up empty — covers media that CAROUSEL_SLIDE_MEDIA
+ * accepts but POST_IMG rejects (e.g. alt="" cdninstagram images). Video is
+ * checked first so a video slide never resolves to its poster image.
+ */
+function extractSlideMedia(slide: HTMLElement): { url: string; kind: 'image' | 'video' } | null {
+  const video = slide.querySelector(POST_VIDEO) as HTMLVideoElement | null;
+  if (video) return { url: video.currentSrc, kind: 'video' };
+
+  const media = slide.querySelector(CAROUSEL_SLIDE_MEDIA);
+  if (media && media.tagName === 'IMG') {
+    return { url: pickBestSrc(media as HTMLImageElement), kind: 'image' };
+  }
 
   return null;
 }
@@ -112,7 +170,7 @@ function pickActiveSlide(ul: HTMLUListElement, slides: HTMLLIElement[]): HTMLLIE
       Math.min(r.right, viewport.right) - Math.max(r.left, viewport.left),
     );
     if (overlap <= 0) continue;
-    if (!best || overlap >= best.overlap) best = { li, overlap };
+    if (!best || overlap > best.overlap) best = { li, overlap };
   }
   return best?.li ?? slides[0]!;
 }

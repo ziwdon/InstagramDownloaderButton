@@ -12,4 +12,12 @@
   &:hover {
     opacity: 0.6;
   }
+
+  // In-flight state while a resolution run (relay/API lookup + download
+  // message) is pending. Opacity/cursor only — no geometry change, so the
+  // action bar layout never shifts when a click starts.
+  &[data-igdl-busy] {
+    opacity: 0.5;
+    cursor: progress;
+  }
 }

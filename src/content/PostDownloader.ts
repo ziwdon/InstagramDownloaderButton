@@ -14,6 +14,8 @@ import {
   type RelaySlide,
 } from '../core/relay';
 import { shortcodeToMediaId } from '../core/shortcode';
+import { VIDEO_DOWNLOADS_ENABLED } from '../core/config';
+import { classify } from './UrlRouter';
 import type { DownloadRequest } from '../core/messages';
 import { Alert } from './ui/Alert';
 import { createDownloadButton } from './ui/DownloadButton';
@@ -80,7 +82,7 @@ export class PostDownloader {
     }
     if (!saveOuter) return;
 
-    const btn = createDownloadButton(() => void this.onClick(container));
+    const btn = createDownloadButton(() => this.onClick(container));
     btn.classList.add(BTN_CLASS);
 
     // The action-bar section is a 2-column CSS grid (`grid-template-columns:
@@ -105,13 +107,27 @@ export class PostDownloader {
       return;
     }
 
-    const shortcode = extractShortcode(container);
+    const shortcode = extractShortcode(container) ?? extractShortcodeFromURL();
     const accountName = extractAuthor(container);
 
     let downloadURL: string | null = null;
 
     if (media.kind === 'image') {
       downloadURL = nonBlobOrNull(media.url);
+
+      if (!downloadURL) {
+        // DOM srcset came back empty/blob/expired — recover via the same
+        // relay resolution the video branch uses below, taking the active
+        // slide's best image_versions2 candidate (relay.ts already returns
+        // the widest one as `imageURL`). The DOM path above remains primary;
+        // this only engages when it produced nothing usable.
+        const relaySlides = extractAllSlidesFromRelay(shortcode);
+        const slide = pickActiveRelaySlide(container, relaySlides);
+        downloadURL = slide?.imageURL ?? null;
+      }
+    } else if (!VIDEO_DOWNLOADS_ENABLED) {
+      Alert.warn('Video downloads are currently disabled');
+      return;
     } else {
       // Video: prefer relay/API URL — the DOM <video> often has an HLS blob or
       // a short-lived URL that fails to download.
@@ -146,6 +162,7 @@ export class PostDownloader {
       kind: 'download',
       mediaURL: downloadURL,
       accountName,
+      mediaKind: media.kind,
       ...(shortcode !== null && { postShortcode: shortcode }),
     };
     try {
@@ -216,15 +233,48 @@ function pickActiveRelaySlide(scope: HTMLElement, slides: RelaySlide[]): RelaySl
     if (matched) return matched;
   }
 
+  // Only trust the DOM's positional carousel index when the DOM rendered the
+  // same number of slides as the relay payload has. Instagram windows
+  // carousels for deep links (e.g. `?img_index=N`), so the DOM slide count
+  // and the relay slide count can diverge; when they do, DOM index N no
+  // longer corresponds to relay index N, and indexing into `slides` would
+  // silently resolve the wrong media (F3). `findActiveSlide`'s `total` is the
+  // same DOM slide-carrier count used to compute `index`, so this check
+  // reuses that logic rather than recomputing it.
   const active = findActiveSlide(scope);
-  if (active && active.index < slides.length) {
+  if (active && active.total === slides.length) {
     const slide = slides[active.index];
     if (slide) return slide;
   }
 
-  return slides.find((s) => s.videoURL !== null) ?? slides[0] ?? null;
+  // Counts diverged (or no carousel was found at all) and the URL match
+  // above failed too: there is no trustworthy way to pick a slide here.
+  // Returning null lets the caller's own fallback take over — the
+  // shortcode-derived API fetch for video, or the "could not locate media"
+  // toast for images — rather than guessing positionally.
+  return null;
 }
 
 function nonBlobOrNull(url: string): string | null {
   return url && !url.startsWith('blob:') ? url : null;
+}
+
+// Fallback for when extractShortcode() finds no permalink anchor in the
+// container (e.g. layout variance). On single-post routes the shortcode is
+// already present in the URL itself. Mirrors the segment logic in
+// UrlRouter.classify() so this only resolves on post/reel routes — never on
+// home, where the URL's shortcode (if any) wouldn't identify which feed post
+// was actually clicked.
+function extractShortcodeFromURL(): string | null {
+  const route = classify(location.href);
+  if (route !== 'post' && route !== 'reel') return null;
+
+  const segments = location.pathname.split('/').filter(Boolean);
+  if (segments[0] === 'p' || segments[0] === 'reel' || segments[0] === 'reels') {
+    return segments[1] ?? null;
+  }
+  if (segments.length >= 2 && (segments[1] === 'p' || segments[1] === 'reel')) {
+    return segments[2] ?? null;
+  }
+  return null;
 }
