@@ -17,6 +17,8 @@ The button appears next to the bookmark/save icon on feed posts, post modals, an
 - Carousel-aware: downloads the currently visible slide
 - MV3-compatible architecture for Chrome and Firefox
 
+> **Note:** Video downloads are currently **disabled by default**. Image downloads are unaffected. Video resolution depends on undocumented Instagram internals (SSR Relay JSON blobs and an unofficial private API endpoint) that can change without warning at any Instagram deploy, breaking video downloads for all users with no notice. Rather than ship something that can silently break, video download support is gated behind a compile-time flag until it can be actively maintained. The code is fully implemented and tested — see `src/core/config.ts`.
+
 ## Installation
 
 ### Firefox
