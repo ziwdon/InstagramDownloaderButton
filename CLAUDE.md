@@ -154,7 +154,7 @@ Relay payload coverage is **SSR-only**: feed pages embed `xdt_api__v1__feed__tim
 
 ### Selectors (`src/core/selectors.ts`)
 
-All Instagram DOM queries live here. **Instagram rotates its atomic CSS class names** — never hard-code classes like `.M9sTE`. All selectors use semantic anchors (ARIA labels, roles, structural patterns). Each exported constant is a string or `readonly string[]` (joined with `,` at call sites).
+All Instagram DOM queries live here. **Instagram rotates its atomic CSS class names** — never hard-code classes like `.M9sTE`. All selectors use semantic anchors (ARIA labels, roles, structural patterns). Each exported constant is a string or `readonly string[]`. Call sites combine a `readonly string[]` one of two ways, and the choice matters: `.join(',')` for genuine any-match-is-sufficient cases (e.g. `SAVE_SVG`'s aria-label-OR-geometry pair — either anchor alone is enough, array order is irrelevant), versus `queryByPriority(scope, selectors)` (`extractors.ts`) for cases where array order encodes a real most-specific-first fallback — `AUTHOR_LINK` and `POST_IMG` use this, because `querySelector(a.join(','))` returns the first match in *document* order, not the first-listed selector, which previously let a broad fallback (e.g. a comment avatar) win over a more specific match that appeared later in the DOM.
 
 **Locale stability:** Instagram localizes `aria-label` and `<title>` text on every action-bar SVG when the URL carries `?hl=<locale>` ("Save" → "Guardar" in Spanish, etc.), but the SVG `polygon`/`path` geometry is identical across all locales. `SAVE_SVG`, `LIKE_SVG`, and `SHARE_SVG` therefore each OR a geometry-based selector (`svg:has(polygon[points="..."])` / `svg:has(path[d^="..."])`) with the English aria-label selector. Either anchor is sufficient — both must break for the action bar to become undiscoverable. Image extraction is unaffected by `?hl=` because Instagram's auto-generated post `alt` text (`"Photo by …"`, `"May be …"`) stays English regardless of the locale parameter.
 
@@ -174,6 +174,14 @@ If a selector breaks: update `src/core/selectors.ts`, verify against HTML in `re
 ### Message types (`src/core/messages.ts`)
 
 All cross-context communication is typed via `ExtensionMessage = DownloadRequest`. `DownloadRequest` carries `mediaURL`, `accountName`, `mediaKind: 'image' | 'video'` (used by the background to pick a default file extension when the URL itself doesn't reveal one), and optional `postShortcode`/`index`. `isDownloadRequest(msg: unknown): msg is DownloadRequest` validates a message's shape at the background boundary before it's trusted — a malformed/missing message is logged (dev-only) and dropped rather than throwing. There used to be `AlertPush`/`LocationChange` members reserved for a future background→content notification relay; they were removed as dead code since nothing constructed or sent them.
+
+### Download button re-entrancy guard (`src/content/ui/DownloadButton.ts`)
+
+`createDownloadButton()` sets a `data-igdl-busy` attribute (+ `aria-disabled`) synchronously, before any `await`, the moment a click/keydown is handled — the `hasAttribute` check and the `setAttribute` write happen in the same synchronous call, so a second click dispatched before the first `onClick()` resolves can't race past the guard. The attribute is cleared in a `finally` that covers success, rejection, and a synchronous throw alike. This prevents double-downloads (and duplicate `(1)`-suffixed files) from rapid double-clicks or key-repeat. If you touch `onClick`'s call site or make it return early in a new code path, preserve this: the guard only works because there's no `await` between the check and the set.
+
+### Toolbar icon (`wxt.config.ts`, `entrypoints/background.ts`)
+
+The manifest's `action` block sets an expectation-setting `default_title` ("Instagram Downloader — buttons appear on posts") since there's no popup. `background.ts` registers a `browser.action.onClicked` listener that opens `https://www.instagram.com/` in a new tab via `browser.tabs.create()` — otherwise the icon would be a dead affordance. No popup/options UI is added; that remains out of scope.
 
 ### Video extraction (`src/core/relay.ts`)
 
@@ -199,6 +207,7 @@ The API fetch runs in the content script (not the background), so session cookie
 
 - No `XMLHttpRequest`, no `URL.createObjectURL`, no `window.*`
 - No blob intermediaries — CDN URLs are passed directly to `browser.downloads.download()`
+- `src/background/url-validation.ts`'s `isDownloadableURL()` rejects any `mediaURL` whose scheme isn't `http:`/`https:` (parsed via `new URL()`, try/caught) before it ever reaches `browser.downloads.download()` — a defensive check against a `data:`/`javascript:`/`file:` URL leaking through an extractor bug, separate from `isDownloadRequest()`'s shape check above.
 - Firefox-only: `headers: [{ name: 'Referer', value: 'https://www.instagram.com/' }]` is sent on the **first** `downloads.download()` attempt (Chrome's call is unchanged, with no `headers` key — Chrome doesn't support it). There is no retry: `download()` resolves once a download is *queued*, not once it completes, so a later failure (e.g. a Referer-sensitive CDN 403) never surfaces as a rejection of that promise — it only shows up via `downloads.onChanged`.
 - `src/background/download.ts` registers a `downloads.onChanged` listener (`registerDownloadTracking()`, called synchronously at service-worker startup) that tracks ids this extension queued and logs the reason when one reaches state `'interrupted'` — debug-only, no user-facing notification. A small bounded buffer reconciles the rare case where that event arrives before the id is tracked (see the `earlyTerminalEvents` doc comment in that file), so the tracking Map cannot leak.
 - Use `import.meta.env.BROWSER` (injected by `wxt`) to branch browser-specific behavior
